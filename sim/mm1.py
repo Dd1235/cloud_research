@@ -3,6 +3,7 @@ import numpy as np
 from sim.engine import Engine
 from .policies.round_robin import RoundRobin
 from .workers import Worker
+from .request import Request
 
 # single-threaded discrete-event simulation
 # lambda - rate at which requests arrive
@@ -60,8 +61,11 @@ def simulate(lam : float, mu : float, n_arrivals: int = 20_000, seed: int = 42, 
 
 
 def simulate_with_workers(
-    lam: float,
-    mu: float,
+    rate: float,
+    c_prefill: float,
+    c_decode: float,
+    prompt_tokens: int,
+    output_tokens: int,
     n_workers: int = 2,
     n_arrivals: int = 20_000,
     seed: int = 0,
@@ -71,38 +75,47 @@ def simulate_with_workers(
 
     engine = Engine(seed)
     workers = [
-        Worker(engine, wid=worker_id, service_rate=mu)
+        Worker(
+            engine,
+            wid=worker_id,
+            c_prefill=c_prefill,
+            c_decode=c_decode,
+        )
         for worker_id in range(n_workers)
     ]
     policy = RoundRobin()
+    requests = []
     arrived = 0
 
     def arrive() -> None:
         nonlocal arrived
 
+        req = Request(
+            id=arrived,
+            arrival=engine.now,
+            prompt_tokens=prompt_tokens,
+            output_tokens=output_tokens,
+        )
+        requests.append(req)
         arrived += 1
 
         if arrived < n_arrivals:
-            arrival_gap = engine.rng.exponential(1 / lam)
+            arrival_gap = engine.rng.exponential(1 / rate)
             engine.schedule(arrival_gap, arrive)
 
-        chosen_worker = policy.choose(None, workers)
-        chosen_worker.submit(engine.now)
+        chosen_worker = policy.choose(req, workers)
+        chosen_worker.submit(req)
 
-    
-    first_arrival_gap = engine.rng.exponential(1 / lam)
+    first_arrival_gap = engine.rng.exponential(1 / rate)
     engine.schedule(first_arrival_gap, arrive)
 
     engine.run()
 
-    all_sojourn = [
-        latency
-        for worker in workers
-        for latency in worker.sojourn
-    ]
-
-    warmup_count = int(len(all_sojourn) * warmup_frac)
-    measured = np.asarray(all_sojourn[warmup_count:])
+    warmup_count = int(len(requests) * warmup_frac)
+    measured = np.asarray([
+        req.ttft
+        for req in requests[warmup_count:]
+    ])
 
     return measured.mean(), np.percentile(measured, 99)
 
