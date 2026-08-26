@@ -1,7 +1,6 @@
-import heapq
-import itertools
 from collections import deque
 import numpy as np
+from sim.engine import Engine
 
 
 # single-threaded discrete-event simulation
@@ -12,47 +11,46 @@ import numpy as np
 # fifo, processes based on smaller time, smaller seq no (to break ties), "arrived" vs "depart", 
 
 def simulate(lam : float, mu : float, n_arrivals: int = 20_000, seed: int = 42, warmup_frac: float = 0.1):
-    rng = np.random.default_rng(seed)
-    heap = []
-    seq = itertools.count()
-
-    def push(time, kind, payload=None):
-        heapq.heappush(heap, (time, next(seq), kind, payload))
-
-    now = 0.0
+    engine = Engine(seed)
     busy = False
     queue = deque()
     sojourn = []
     arrived = 0
 
-    push(rng.exponential(1 / lam), "arrive")
+    def arrive() -> None:
+        nonlocal busy, arrived
 
-    while heap:
-        now, _, kind, payload = heapq.heappop(heap)
+        arrived += 1
 
-        if kind == "arrive":
-            arrived += 1
+        if arrived < n_arrivals:
+            arrival_gap = engine.rng.exponential(1 / lam)
+            engine.schedule(arrival_gap, arrive)
 
-            if arrived < n_arrivals:
-                next_gap = rng.exponential(1 / lam)
-                push(now + next_gap, "arrive")
-
-            if busy:
-                queue.append(now)
-            else:
-                busy = True
-                service_time = rng.exponential(1 / mu)
-                push(now + service_time, "depart", now)
-
+        if busy:
+            queue.append(engine.now)
         else:
-            sojourn.append(now - payload)
-            if queue:
-                next_arrival = queue.popleft()
-                service_time = rng.exponential(1/mu)
-                push(now + service_time, "depart", next_arrival)
+            busy = True
+            service_time = engine.rng.exponential(1 / mu)
+            engine.schedule(service_time, depart, engine.now)
 
-            else:
-                busy = False
+
+    def depart(arrival_time: float) -> None:
+
+        nonlocal busy
+        sojourn.append(engine.now - arrival_time)
+
+        if queue:
+            next_arrival = queue.popleft()
+            service_time = engine.rng.exponential(1 / mu)
+            engine.schedule(service_time, depart, next_arrival)
+        else:
+            busy = False
+        
+
+    first_arrival_gap = engine.rng.exponential(1 / lam)
+    engine.schedule(first_arrival_gap, arrive)
+
+    engine.run()
 
     warmup_count = int(len(sojourn) * warmup_frac)
     measured = np.asarray(sojourn[warmup_count:])

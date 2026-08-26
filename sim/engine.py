@@ -23,8 +23,21 @@ class Engine:
         )
 
     # generic event loop
-    def run(self) -> None:
+    def run(self, until : float | None = None) -> None:
         while self._heap:
-            event_time, _, fn, args = heapq.heappop(self._heap)
+            event_time, seq, fn, args = heapq.heappop(self._heap)
+
+            if until is not None and event_time > until:
+                heapq.heappush(
+                    self._heap,
+                    (event_time, seq, fn, args),
+                )
+                return
+
             self.now = event_time
             fn(*args)
+
+
+    @property
+    def pending(self) -> int:
+        return len(self._heap)
