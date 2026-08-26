@@ -12,7 +12,7 @@ __pycache__/
 .ipynb_checkpoints/
 
 # --- experiment outputs ---
-out/
+
 
 # --- editors / os ---
 .DS_Store
