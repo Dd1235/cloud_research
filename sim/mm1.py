@@ -1,7 +1,8 @@
 from collections import deque
 import numpy as np
 from sim.engine import Engine
-
+from .policies.round_robin import RoundRobin
+from .workers import Worker
 
 # single-threaded discrete-event simulation
 # lambda - rate at which requests arrive
@@ -54,6 +55,54 @@ def simulate(lam : float, mu : float, n_arrivals: int = 20_000, seed: int = 42, 
 
     warmup_count = int(len(sojourn) * warmup_frac)
     measured = np.asarray(sojourn[warmup_count:])
+
+    return measured.mean(), np.percentile(measured, 99)
+
+
+def simulate_with_workers(
+    lam: float,
+    mu: float,
+    n_workers: int = 2,
+    n_arrivals: int = 20_000,
+    seed: int = 0,
+    warmup_frac: float = 0.1,
+):
+    assert n_workers >= 1
+
+    engine = Engine(seed)
+    workers = [
+        Worker(engine, wid=worker_id, service_rate=mu)
+        for worker_id in range(n_workers)
+    ]
+    policy = RoundRobin()
+    arrived = 0
+
+    def arrive() -> None:
+        nonlocal arrived
+
+        arrived += 1
+
+        if arrived < n_arrivals:
+            arrival_gap = engine.rng.exponential(1 / lam)
+            engine.schedule(arrival_gap, arrive)
+
+        chosen_worker = policy.choose(None, workers)
+        chosen_worker.submit(engine.now)
+
+    
+    first_arrival_gap = engine.rng.exponential(1 / lam)
+    engine.schedule(first_arrival_gap, arrive)
+
+    engine.run()
+
+    all_sojourn = [
+        latency
+        for worker in workers
+        for latency in worker.sojourn
+    ]
+
+    warmup_count = int(len(all_sojourn) * warmup_frac)
+    measured = np.asarray(all_sojourn[warmup_count:])
 
     return measured.mean(), np.percentile(measured, 99)
 
