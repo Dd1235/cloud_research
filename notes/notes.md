@@ -8,3 +8,7 @@
     - mean latency = 1 / (mu - lam)
     - p99 = ln(100) / (mu - lam)
 
+- ttft - time to first token
+- tpot - time per output token = (finish - first_token) / (output_tokens - 1)
+- prefill - per prompt token
+- decode - per output token
