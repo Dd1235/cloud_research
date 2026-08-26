@@ -1,0 +1,20 @@
+# --- personal learning material (never tracked) ---
+prefix-aware-serving-plan.md
+learning/
+.reference/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- experiment outputs ---
+out/
+
+# --- editors / os ---
+.DS_Store
+.vscode/
+.idea/
