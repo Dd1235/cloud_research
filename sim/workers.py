@@ -1,43 +1,52 @@
 from collections import deque
+from .request import Request
 
 
 class Worker:
 
-    def __init__(self, engine, wid: int, service_rate: float):
+    def __init__(self, engine, wid: int, c_prefill: float, c_decode: float):
         self.engine = engine
         self.id = wid
-        self.service_rate = service_rate
+        self.c_prefill = c_prefill
+        self.c_decode = c_decode
 
         self.queue = deque()
         self.busy = False
         self.completed = 0
 
-        self.sojourn = []   
 
-    def _finish(self, arrival_time: float) -> None:
-        sojourn_time = self.engine.now - arrival_time
-        self.sojourn.append(sojourn_time)
+    def _first_token(self, req: Request) -> None:
+        req.first_token = self.engine.now
 
+    def _finish(self, req: Request) -> None:
+        req.finish = self.engine.now
         self.completed += 1
-        self._start_next()   
+        self._start_next()
 
     @property
     def outstanding(self) -> int:
         return len(self.queue) + (1 if self.busy else 0)
 
-    def submit(self, arrival_time: float) -> None:
-        self.queue.append(arrival_time)
+    def submit(self, req: Request) -> None:
+        req.worker_id = self.id
+        self.queue.append(req)
 
         if not self.busy:
             self._start_next()
 
     def _start_next(self) -> None:
+
         if not self.queue:
             self.busy = False
             return
 
         self.busy = True
-        arrival_time = self.queue.popleft()
+        req = self.queue.popleft()
+        req.start = self.engine.now
 
-        service_time = self.engine.rng.exponential(1 / self.service_rate)
-        self.engine.schedule(service_time, self._finish, arrival_time)
+        prefill_time = self.c_prefill * req.prompt_tokens
+        decode_time = self.c_decode * req.output_tokens
+
+
+        self.engine.schedule(prefill_time, self._first_token, req)
+        self.engine.schedule(prefill_time + decode_time, self._finish, req)
