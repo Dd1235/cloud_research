@@ -5,7 +5,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from mm1 import simulate
+from sim.mm1 import simulate
 
 MU = 1.0
 RHOS = np.array([0.3, 0.5, 0.7, 0.8, 0.9, 0.95]) # utilization levels, lam = rho*mu
