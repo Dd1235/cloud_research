@@ -12,3 +12,5 @@
 - tpot - time per output token = (finish - first_token) / (output_tokens - 1)
 - prefill - per prompt token
 - decode - per output token
+
+- at the same target per-worker utilization, two workers will have lower ttft than one. round robin alternates requests, making each workers arrival stream more regular than the original poisson stream. that smoothing reduces queue bursts. property of the simple deterministic round robin.
