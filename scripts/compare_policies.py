@@ -5,6 +5,9 @@ from sim.policies.longest_prefix import LongestPrefix
 from sim.policies.round_robin import RoundRobin
 from sim.workers import Worker
 from sim.workload import generate
+from sim.metrics import fmt, summarize
+
+import argparse
 
 
 def run(
@@ -50,28 +53,9 @@ def run(
 
     engine.run()
 
-    ttfts = np.asarray([req.ttft for req in requests])
+    return summarize(requests, workers)
 
-    tokens_processed = sum(
-        worker.tokens_processed
-        for worker in workers
-    )
-    tokens_reused = sum(
-        worker.tokens_reused
-        for worker in workers
-    )
-
-    return {
-        "mean_ttft": float(ttfts.mean()),
-        "reuse_rate": tokens_reused / tokens_processed,
-        "completed_per_worker": [
-            worker.completed
-            for worker in workers
-        ],
-    }
-
-
-def main():
+def main(seeds: int = 5):
     common = dict(
         n_workers=4,
         rate=2.0,
@@ -81,21 +65,39 @@ def main():
         cache_blocks=256,
         zipf_alpha=1.0,
     )
-
     for policy_type in (RoundRobin, LongestPrefix):
-        result = run(
-            policy_type(),
-            seed=0,
-            **common,
-        )
+        rows = [
+            run(
+                policy_type(),
+                seed=seed,
+                **common,
+            )
+            for seed in range(seeds)
+        ]
 
-        print(
-            f"{policy_type.name:>15} "
-            f"mean_ttft={result['mean_ttft']:.3f} "
-            f"reuse_rate={result['reuse_rate']:.1%} "
-            f"completed={result['completed_per_worker']}"
-        )
+        median_row = {
+            key: (
+                float(np.median([row[key] for row in rows]))
+                if isinstance(rows[0][key], float)
+                else rows[0][key]
+            )
+            for key in rows[0]
+        }
+
+        print(f"{policy_type.name:>15}: {fmt(median_row)}")
+
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Compare cache-blind and prefix-aware routing."
+    )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        default=5,
+        help="number of random seeds per policy (default: 5)",
+    )
+    args = parser.parse_args()
+
+    main(seeds=args.seeds)

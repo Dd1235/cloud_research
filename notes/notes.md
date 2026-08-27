@@ -14,3 +14,7 @@
 - decode - per output token
 
 - at the same target per-worker utilization, two workers will have lower ttft than one. round robin alternates requests, making each workers arrival stream more regular than the original poisson stream. that smoothing reduces queue bursts. property of the simple deterministic round robin.
+
+
+- python built-in string hash is intentionally randomized between processes so routing would not be stable across runs
+- a consistent-hash ring also, on adding/removing worker, remaps roughly 1/n keys

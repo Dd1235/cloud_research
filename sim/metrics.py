@@ -54,3 +54,12 @@ def summarize(
             for worker in workers
         ),
     }
+
+
+def fmt(row: dict) -> str:
+    return " ".join(
+        f"{key}={value:.3f}"
+        if isinstance(value, float)
+        else f"{key}={value}"
+        for key, value in row.items()
+    )
