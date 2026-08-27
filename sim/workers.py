@@ -15,6 +15,8 @@ class Worker:
         self.busy = False
         self.completed = 0
 
+        self.busy_time = 0.0
+
         self.block_size = block_size
         self.cache = PrefixCache(cache_blocks)
 
@@ -68,3 +70,5 @@ class Worker:
 
         self.engine.schedule(prefill_time, self._first_token, req)
         self.engine.schedule(prefill_time + decode_time, self._finish, req)
+
+        self.busy_time += prefill_time + decode_time
