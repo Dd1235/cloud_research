@@ -7,6 +7,8 @@ class Request:
     arrival: float
     prompt_tokens: int
     output_tokens: int
+    blocks: tuple = ()
+    cached_tokens: int = 0
 
     worker_id: int | None = None
     start: float | None = None # prefill starts
