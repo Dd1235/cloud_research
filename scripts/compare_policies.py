@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 
 from sim.batched_worker import BatchedWorker
+from sim.blockrates import BlockRateTracker
 from sim.engine import Engine
 from sim.metrics import fmt, summarize
 from sim.policies import POLICIES, make_policy
@@ -40,6 +41,7 @@ def build_workers(
     c_prefill: float = C_PREFILL,
     c_decode_batched: float = C_DECODE_BATCHED,
     max_batch: int = 16,
+    kv_available_at: str = "admission",
 ):
     if worker_kind == "sequential":
         return [
@@ -65,6 +67,7 @@ def build_workers(
             block_size=block_size,
             max_batch=max_batch,
             prefill_budget=prefill_budget,
+            kv_available_at=kv_available_at,
         )
         for worker_id in range(n_workers)
     ]
@@ -84,6 +87,9 @@ def run(
     view_kind: str = "perfect",
     view_period: float | None = None,
     shadow_blocks: int | None = None,
+    view_ttl: float | None = None,
+    survival_turnover: float | None = None,
+    kv_available_at: str = "admission",
     workload=None,
     block_size: int = 16,
     c_prefill: float = C_PREFILL,
@@ -104,6 +110,7 @@ def run(
         c_prefill=c_prefill,
         c_decode_batched=c_decode_batched,
         max_batch=max_batch,
+        kv_available_at=kv_available_at,
     )
 
     policy = make_policy(
@@ -125,6 +132,14 @@ def run(
         )
     )
 
+    # the survival view needs per-block reference rates, which the router
+    # collects from its own dispatches over roughly one cache lifetime
+    tracker = (
+        BlockRateTracker(window=survival_turnover)
+        if survival_turnover is not None
+        else None
+    )
+
     # the router installs the cache view on every worker and owns dispatch, so
     # the view error accounting happens here for every script
     router = Router(
@@ -136,7 +151,11 @@ def run(
             engine,
             period=view_period,
             shadow_blocks=shadow_blocks or cache_blocks,
+            ttl=view_ttl,
+            tracker=tracker,
+            turnover=survival_turnover,
         ),
+        tracker=tracker,
     )
 
     sampler = OutstandingSampler(engine, workers)
@@ -308,6 +327,24 @@ if __name__ == "__main__":
         default=1,
         help="session hash and dualmap: leading blocks that identify a session (default: 1)",
     )
+    parser.add_argument(
+        "--view-ttl",
+        type=float,
+        default=None,
+        help="snapshot/shadow views: distrust entries whose last access is older than this many seconds",
+    )
+    parser.add_argument(
+        "--survival-turnover",
+        type=float,
+        default=None,
+        help="snapshot/shadow views: wrap in a survival view using this cache turnover in seconds",
+    )
+    parser.add_argument(
+        "--kv-available-at",
+        choices=["admission", "prefill_done"],
+        default="admission",
+        help="batched worker: when a request's blocks become reusable (default: admission)",
+    )
     args = parser.parse_args()
 
     workload = None
@@ -336,4 +373,7 @@ if __name__ == "__main__":
         c_decode_batched=args.c_decode,
         max_batch=args.max_batch,
         policy_options={"key_blocks": args.session_depth},
+        view_ttl=args.view_ttl,
+        survival_turnover=args.survival_turnover,
+        kv_available_at=args.kv_available_at,
     )
