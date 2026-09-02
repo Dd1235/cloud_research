@@ -3,18 +3,19 @@
 # one cached token block
 class _Node:
 
-    __slots__ = ("key", "parent", "children", "last_access")
+    __slots__ = ("key", "parent", "children", "last_access", "inserted_at")
 
     def __init__(self, key, parent):
         self.key = key
         self.parent = parent
         self.children = {}
         self.last_access = 0.0
+        self.inserted_at = 0.0
 
 
 class PrefixCache:
 
-    def __init__(self, capacity_blocks: int):
+    def __init__(self, capacity_blocks: int, record_residence: bool = False):
 
         assert capacity_blocks >= 1
 
@@ -22,6 +23,11 @@ class PrefixCache:
         self.root = _Node(None, None)
         self.size = 0
         self.evictions = 0
+
+        # how long each evicted block lived: (block, inserted_at, last_access,
+        # evicted_at). opt in, because a long run evicts hundreds of thousands
+        # of blocks and only the theory check wants the distribution
+        self.residence_log = [] if record_residence else None
 
 
     def match(self, blocks) -> int:
@@ -70,6 +76,7 @@ class PrefixCache:
 
             if child is None:
                 child = _Node(block, node)
+                child.inserted_at = now
                 node.children[block] = child
                 self.size += 1
                 created += 1
@@ -78,7 +85,7 @@ class PrefixCache:
             protect.add(id(child))
             node = child
 
-        self._evict(protect)
+        self._evict(protect, now)
         return created
 
     def copy(self) -> "PrefixCache":
@@ -102,6 +109,7 @@ class PrefixCache:
             for block, source_child in source.children.items():
                 target_child = _Node(block, target)
                 target_child.last_access = source_child.last_access
+                target_child.inserted_at = source_child.inserted_at
                 target.children[block] = target_child
                 pending.append((source_child, target_child))
 
@@ -119,7 +127,7 @@ class PrefixCache:
             stack.extend(node.children.values())
 
 
-    def _evict(self, protect=frozenset()) -> None:
+    def _evict(self, protect=frozenset(), now: float = 0.0) -> None:
         while self.size > self.capacity:
             candidates = [
                 leaf
@@ -134,6 +142,11 @@ class PrefixCache:
                 candidates,
                 key=lambda node: node.last_access,
             )
+
+            if self.residence_log is not None:
+                self.residence_log.append(
+                    (victim.key, victim.inserted_at, victim.last_access, now),
+                )
 
             del victim.parent.children[victim.key]
             self.size -= 1

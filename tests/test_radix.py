@@ -121,3 +121,26 @@ def test_match_with_ages_reports_how_long_each_matched_block_sat_untouched():
     assert cache.match_with_ages(("a", "c", "d"), now=5.0) == [2.0, 2.0]
     assert cache.match_with_ages(("z",), now=5.0) == []
     assert len(cache.match_with_ages(("a", "b"), now=5.0)) == cache.match(("a", "b"))
+
+
+def test_residence_log_records_how_long_each_evicted_block_lived():
+    cache = PrefixCache(2, record_residence=True)
+    cache.insert(("a",), now=1.0)
+    cache.insert(("b",), now=2.0)
+    cache.insert(("c",), now=3.0)   # over capacity: the oldest leaf "a" goes
+
+    assert cache.residence_log == [("a", 1.0, 1.0, 3.0)]
+
+    # a refreshed block reports its insertion and its last touch separately
+    cache.insert(("b",), now=4.0)
+    cache.insert(("d",), now=5.0)   # evicts "c" (last touched 3.0), not "b"
+    assert cache.residence_log[-1] == ("c", 3.0, 3.0, 5.0)
+
+
+def test_residence_log_is_off_by_default():
+    cache = PrefixCache(1)
+    cache.insert(("a",), now=1.0)
+    cache.insert(("b",), now=2.0)
+
+    assert cache.residence_log is None
+    assert cache.evictions == 1
