@@ -102,6 +102,7 @@ REPORTED = (
     "routing_regret_rate",
     "execution_fp_rate",
     "load_cv",
+    "queue_cv",
 )
 
 

@@ -7,6 +7,7 @@ from sim.engine import Engine
 from sim.metrics import fmt, summarize
 from sim.policies import POLICIES, make_policy
 from sim.router import Router
+from sim.sampler import OutstandingSampler
 from sim.traces import MOONCAKE_BLOCK_SIZE, load_mooncake
 from sim.views import make_view_factory
 from sim.workers import Worker
@@ -129,10 +130,12 @@ def run(
         ),
     )
 
+    sampler = OutstandingSampler(engine, workers)
+
     router.replay(requests)
     engine.run()
 
-    return summarize(requests, workers)
+    return summarize(requests, workers, sampler=sampler)
 
 
 def median_across_seeds(rows: list[dict]) -> dict:
