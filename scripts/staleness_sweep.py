@@ -27,23 +27,58 @@ from sim.traces import MOONCAKE_BLOCK_SIZE, load_mooncake
 
 PERFECT = 0.0
 
+# how the router interprets a stale entry: as is, cut at a ttl of k cache
+# turnovers, or weighted by its survival probability. ttl and survival need the
+# cache turnover, which the perfect-view run of the same policy measures first
+TREATMENTS = ("raw", "ttl", "survival")
 
-def sweep_policy(policy_name, periods, *, seeds: int, **common):
-    """{period: median row}. period 0 means the perfect view."""
+
+def treatment_settings(treatment: str, turnover: float, ttl_turnovers: float) -> dict:
+    if treatment == "raw" or turnover == float("inf"):
+        return {}
+
+    if treatment == "ttl":
+        return dict(view_ttl=ttl_turnovers * turnover)
+
+    return dict(survival_turnover=turnover)
+
+
+def sweep_policy(policy_name, periods, *, seeds: int, treatment: str = "raw",
+                 ttl_turnovers: float = 1.0, turnover: float | None = None, **common):
+    """{period: median row}. period 0 means the perfect view.
+
+    The perfect view is always run raw: it has no stale entries to treat. Its
+    eviction count gives the turnover that the ttl and survival treatments of
+    the stale views then use, unless one is passed in.
+    """
     rows_by_period = {}
 
-    for period in periods:
-        view_settings = (
-            dict(view_kind="perfect")
-            if period == PERFECT
-            else dict(view_kind="snapshot", view_period=period)
+    perfect_rows = [
+        run(policy_name, seed=seed, view_kind="perfect", **common)
+        for seed in range(seeds)
+    ]
+    rows_by_period[PERFECT] = median_across_seeds(perfect_rows)
+
+    if turnover is None:
+        turnover = cache_turnover_seconds(
+            rows_by_period[PERFECT],
+            cache_blocks=common["cache_blocks"],
+            n_workers=common["n_workers"],
+            n_requests=common["n_requests"],
+            rate=common["rate"],
         )
+
+    for period in periods:
+        if period == PERFECT:
+            continue
 
         rows = [
             run(
                 policy_name,
                 seed=seed,
-                **view_settings,
+                view_kind="snapshot",
+                view_period=period,
+                **treatment_settings(treatment, turnover, ttl_turnovers),
                 **common,
             )
             for seed in range(seeds)
@@ -54,12 +89,14 @@ def sweep_policy(policy_name, periods, *, seeds: int, **common):
     return rows_by_period
 
 
-def run_shadow(policy_name, *, seeds: int, **common):
+def run_shadow(policy_name, *, seeds: int, treatment: str = "raw", ttl_turnovers: float = 1.0,
+               turnover: float = float("inf"), **common):
     rows = [
         run(
             policy_name,
             seed=seed,
             view_kind="shadow",
+            **treatment_settings(treatment, turnover, ttl_turnovers),
             **common,
         )
         for seed in range(seeds)
@@ -102,6 +139,7 @@ REPORTED = (
     "view_fn_rate",
     "routing_regret_rate",
     "execution_fp_rate",
+    "predicted_fp_rate",
     "load_cv",
     "queue_cv",
 )
@@ -112,7 +150,8 @@ def print_row(label, period, row):
     print(f"{label:>16} period={period:>5} {values}")
 
 
-def sweep(policy_names, reference_names, periods, zipfs, *, include_shadow, seeds, **common):
+def sweep(policy_names, reference_names, periods, zipfs, *, include_shadow, seeds,
+          treatment="raw", ttl_turnovers=1.0, **common):
     """Everything the figures need, keyed by (zipf, policy, period)."""
     results = {}
     turnovers = {}
@@ -121,7 +160,9 @@ def sweep(policy_names, reference_names, periods, zipfs, *, include_shadow, seed
         settings = dict(zipf_alpha=zipf_alpha, seeds=seeds, **common)
 
         for policy_name in policy_names:
-            rows_by_period = sweep_policy(policy_name, periods, **settings)
+            rows_by_period = sweep_policy(
+                policy_name, periods, treatment=treatment, ttl_turnovers=ttl_turnovers, **settings,
+            )
 
             for period, row in rows_by_period.items():
                 results[(zipf_alpha, policy_name, period)] = row
@@ -136,7 +177,10 @@ def sweep(policy_names, reference_names, periods, zipfs, *, include_shadow, seed
             )
 
             if include_shadow:
-                row = run_shadow(policy_name, **settings)
+                row = run_shadow(
+                    policy_name, treatment=treatment, ttl_turnovers=ttl_turnovers,
+                    turnover=turnovers[(zipf_alpha, policy_name)], **settings,
+                )
                 results[(zipf_alpha, policy_name, "shadow")] = row
                 print_row(f"{policy_name} a={zipf_alpha}", "shadow", row)
 
@@ -309,6 +353,10 @@ def main():
     parser.add_argument("--c-decode", type=float, default=C_DECODE_BATCHED, help=f"batched worker: seconds per decoding sequence per iteration (default: {C_DECODE_BATCHED})")
     parser.add_argument("--max-batch", type=int, default=16, help="batched worker: sequences resident at once (default: 16)")
     parser.add_argument("--session-depth", type=int, default=1, help="session hash and dualmap: leading blocks that identify a session (default: 1)")
+    parser.add_argument("--treatment", choices=TREATMENTS, default="raw", help="how stale view entries are read: raw, ttl at k turnovers, or survival weighted (default: raw)")
+    parser.add_argument("--ttl-turnovers", type=float, default=1.0, help="ttl treatment: ttl as a multiple of the measured cache turnover (default: 1.0)")
+    parser.add_argument("--overlap-source", choices=["raw", "expected"], default="raw", help="cardinal scorers read the view's raw promise or its survival expectation (default: raw)")
+    parser.add_argument("--kv-available-at", choices=["admission", "prefill_done"], default="admission", help="batched worker: when a request's blocks become reusable (default: admission)")
     args = parser.parse_args()
 
     policy_names = resolve_policy_names(args.policies)
@@ -327,7 +375,8 @@ def main():
         c_prefill=args.c_prefill,
         c_decode_batched=args.c_decode,
         max_batch=args.max_batch,
-        policy_options={"key_blocks": args.session_depth},
+        policy_options={"key_blocks": args.session_depth, "overlap_source": args.overlap_source},
+        kv_available_at=args.kv_available_at,
     )
 
     rate = args.rate
@@ -362,6 +411,8 @@ def main():
         zipfs,
         include_shadow=include_shadow,
         seeds=seeds,
+        treatment=args.treatment,
+        ttl_turnovers=args.ttl_turnovers,
         rate=rate,
         **common,
     )
@@ -392,6 +443,8 @@ def main():
                 policy_name,
                 periods,
                 seeds=args.seeds,
+                treatment=args.treatment,
+                ttl_turnovers=args.ttl_turnovers,
                 rate=rate,
                 zipf_alpha=zipfs[0],
                 **common,
