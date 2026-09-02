@@ -45,7 +45,7 @@ class Router:
         chosen.view.record_dispatch(req.blocks, self.engine.now)
 
         if self.tracker is not None:
-            self.tracker.observe(req.blocks, self.engine.now)
+            self.tracker.observe(req.blocks, self.engine.now, chosen.id)
 
         self.dispatches[chosen.id] += 1
         chosen.submit(req)

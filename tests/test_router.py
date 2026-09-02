@@ -179,8 +179,9 @@ def test_router_records_the_survival_views_expected_tokens():
     assert req.estimated_cached_tokens == 32
     assert req.expected_cached_tokens == pytest.approx(0.0)
 
-    # the dispatch itself was observed by the tracker only after the estimate
-    assert tracker.rate("a", now=15.0) == pytest.approx(1 / 100)
+    # the dispatch itself was observed by the tracker only after the estimate,
+    # and against the worker it went to
+    assert tracker.rate("a", now=15.0, worker_id=0) == pytest.approx(1 / 100)
 
 
 def test_block_samples_carry_the_believed_age_and_whether_the_promise_was_false():

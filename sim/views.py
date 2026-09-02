@@ -199,7 +199,8 @@ class SurvivalView(CacheView):
     can report that curve as a small histogram, or a calibration run can fit it.
     """
 
-    def __init__(self, inner: CacheView, engine, tracker, turnover: float, residence_cdf=None):
+    def __init__(self, inner: CacheView, engine, tracker, turnover: float, residence_cdf=None,
+                 worker_id=None):
         assert turnover > 0
 
         self._inner = inner
@@ -207,6 +208,9 @@ class SurvivalView(CacheView):
         self._tracker = tracker
         self.turnover = turnover
         self._residence_cdf = residence_cdf
+        # the rescue asks whether *this* worker saw the block again, so rates are
+        # read per worker when the tracker was fed per worker
+        self._worker_id = worker_id
 
     def gone_if_not_refreshed(self, known_age: float, scrape_age: float) -> float:
         """P[evicted by now | the view saw it present scrape_age ago, idle since].
@@ -242,7 +246,7 @@ class SurvivalView(CacheView):
         if scrape_age == float("inf"):
             return 1.0 - gone
 
-        rate = self._tracker.rate(block, self._engine.now)
+        rate = self._tracker.rate(block, self._engine.now, self._worker_id)
         return 1.0 - math.exp(-rate * scrape_age) * gone
 
     def match_expected(self, blocks) -> float:
@@ -311,6 +315,7 @@ def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None, ttl
 
     if tracker is not None:
         assert turnover is not None, "a survival view needs the cache turnover"
-        return lambda worker: SurvivalView(base(worker), engine, tracker, turnover, residence_cdf)
+        return lambda worker: SurvivalView(base(worker), engine, tracker, turnover, residence_cdf,
+                                           worker_id=worker.id)
 
     return base
