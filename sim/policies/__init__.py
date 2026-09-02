@@ -1,6 +1,7 @@
 from .dualmap import DualMap
 from .hybrid import Hybrid
 from .least_outstanding import LeastOutstanding
+from .lmetric import Lmetric
 from .longest_prefix import LongestPrefix
 from .power_of_two import PowerOfTwo
 from .round_robin import RoundRobin
@@ -31,6 +32,9 @@ POLICIES = {
     DualMap.name: lambda rng, options: DualMap(
         key_blocks=options.get("key_blocks", 1),
     ),
+    Lmetric.name: lambda rng, options: Lmetric(
+        overlap_source=options.get("overlap_source", "raw"),
+    ),
 }
 
 
@@ -50,6 +54,7 @@ __all__ = [
     "DualMap",
     "Hybrid",
     "LeastOutstanding",
+    "Lmetric",
     "LongestPrefix",
     "PowerOfTwo",
     "RoundRobin",
