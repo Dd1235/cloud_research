@@ -7,7 +7,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from compare_policies import median_across_seeds, resolve_policy_names, run
+from compare_policies import (
+    C_PREFILL,
+    median_across_seeds,
+    resolve_policy_names,
+    run,
+    trace_workload,
+)
+from sim.traces import MOONCAKE_BLOCK_SIZE, load_mooncake
 
 
 # The research question. Production routers never see a worker's true cache:
@@ -207,7 +214,8 @@ def plot_sweep(results, policy_names, reference_names, periods, zipfs, *, includ
                         label=reference_name if metric_key == "hit_rate" else None,
                     )
 
-            axis.set_title(f"{title} (zipf {zipf_alpha})")
+            workload_label = "trace" if zipf_alpha != zipf_alpha else f"zipf {zipf_alpha}"
+            axis.set_title(f"{title} ({workload_label})")
             axis.set_xlabel("mean observed view age (s)")
             axis.set_xscale("symlog", linthresh=1.0)
             axis.grid(alpha=0.3)
@@ -293,6 +301,9 @@ def main():
     parser.add_argument("--worker", choices=["sequential", "batched"], default="batched", help="worker model (default: batched)")
     parser.add_argument("--prefill-budget", type=int, default=0, help="batched worker prompt tokens per iteration, 0 unchunked (default: 0)")
     parser.add_argument("--output-prefix", default="out/staleness", help="figure and csv prefix (default: out/staleness)")
+    parser.add_argument("--trace", default=None, help="replay a mooncake jsonl trace instead of the synthetic workload; zipf, rate and the scaling figure are then not applicable")
+    parser.add_argument("--speedup", type=float, default=1.0, help="trace only: compress arrival gaps by this factor (default: 1.0)")
+    parser.add_argument("--c-prefill", type=float, default=C_PREFILL, help=f"seconds per uncached prompt token (default: {C_PREFILL})")
     args = parser.parse_args()
 
     policy_names = resolve_policy_names(args.policies)
@@ -308,7 +319,31 @@ def main():
         cache_blocks=args.cache_blocks,
         worker_kind=args.worker,
         prefill_budget=args.prefill_budget or None,
+        c_prefill=args.c_prefill,
     )
+
+    rate = args.rate
+    seeds = args.seeds
+
+    if args.trace is not None:
+        # the trace fixes the arrival process, so its own rate is what the
+        # turnover time and the arrivals-per-refresh axis must use. only p2c
+        # draws random numbers, so extra seeds would just repeat the same run
+        replayed = load_mooncake(args.trace, speedup=args.speedup, limit=args.requests)
+        rate = len(replayed) / replayed[-1].arrival
+        seeds = 1
+        zipfs = [float("nan")]
+        common.update(
+            workload=trace_workload(args.trace, speedup=args.speedup, limit=args.requests),
+            block_size=MOONCAKE_BLOCK_SIZE,
+            n_requests=len(replayed),
+        )
+        trace_stem = os.path.splitext(os.path.basename(args.trace))[0]
+        args.output_prefix = f"{args.output_prefix}_{trace_stem}"
+        print(
+            f"replaying {args.trace}: {len(replayed)} requests over "
+            f"{replayed[-1].arrival:.0f}s = {rate:.2f} req/s at speedup {args.speedup}"
+        )
 
     os.makedirs("out", exist_ok=True)
 
@@ -318,8 +353,8 @@ def main():
         periods,
         zipfs,
         include_shadow=include_shadow,
-        seeds=args.seeds,
-        rate=args.rate,
+        seeds=seeds,
+        rate=rate,
         **common,
     )
     for (zipf_alpha, policy_name), turnover in turnovers.items():
@@ -335,6 +370,10 @@ def main():
         include_shadow=include_shadow,
         path=f"{args.output_prefix}_sweep.png",
     )
+
+    if args.trace is not None:
+        # arrival rate is not a knob on a trace, so there is no scaling figure
+        return
 
     # the scaling figure: same policies, the first zipf, two rates
     twin_results = {}
