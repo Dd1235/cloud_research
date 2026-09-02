@@ -147,3 +147,53 @@ def test_shadow_view_reports_a_block_the_worker_already_evicted():
     assert metrics["view_fp_rate"] == pytest.approx(32 / 96)
     assert metrics["execution_fp_rate"] == pytest.approx(32 / 96)
     assert metrics["view_fn_rate"] == 0.0
+
+
+def test_same_instant_arrivals_are_routed_before_the_iteration_they_trigger():
+    """Two requests at the same timestamp: what does the second one see?
+
+    Both dispatches are scheduled before the run starts, so they carry lower
+    sequence numbers than the worker iteration the first one kicks off. The
+    router therefore sees both before the worker admits either. With the
+    perfect view the second request finds nothing cached yet, because the
+    first has not been admitted; the shadow view already recorded the first
+    dispatch and promises the prefix. At admission both land in the same
+    iteration and the second really does reuse the first's prefill.
+    """
+    from sim.batched_worker import BatchedWorker
+
+    def second_request_with(view_kind):
+        engine = Engine(seed=0)
+        worker = BatchedWorker(
+            engine,
+            wid=0,
+            c_prefill=0.01,
+            c_decode=0.002,
+            c_iter=0.018,
+            cache_blocks=16,
+            block_size=16,
+        )
+        router = Router(
+            engine,
+            LongestPrefix(),
+            [worker],
+            make_view_factory(view_kind, engine, shadow_blocks=16),
+        )
+
+        first = build_request(1, arrival=0.0)
+        second = build_request(2, arrival=0.0)
+        router.replay([first, second])
+        engine.run()
+
+        assert first.first_token == second.first_token   # same iteration
+        return second
+
+    with_perfect = second_request_with("perfect")
+    assert with_perfect.estimated_cached_tokens == 0
+    assert with_perfect.true_cached_tokens_at_dispatch == 0
+    assert with_perfect.cached_tokens == 32   # admitted together, reuse at execution
+
+    with_shadow = second_request_with("shadow")
+    assert with_shadow.estimated_cached_tokens == 32   # the shadow saw the first dispatch
+    assert with_shadow.true_cached_tokens_at_dispatch == 0
+    assert with_shadow.cached_tokens == 32
