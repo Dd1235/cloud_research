@@ -221,3 +221,18 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   dualmap hit rate              0.414   0.413   0.413   0.413   0.414   0.413   0.411   0.414
   dualmap ttft p99 (s)          6.09    6.11    6.11    6.11    6.05    6.09    6.09    5.96
   p2c / round robin hit rate    0.336 / 0.344, p99 6.76 / 7.06
+
+
+- stale view treatments, corrected survival view (2/9/26, E12 addendum): the survival treatment above was measured with the product-form expected match and fleet-wide rescue rates. re-run after the two corrections from the theory check (nested losses, rescue at the chosen worker), still with che's step lifetime at each policy's own turnover. same setup, cardinal scorers reading `--overlap-source expected`. out/treatment_survival_sweep.png/.csv now hold this run
+    - the treatment is no longer harmful on snapshots. hybrid at 15s mean age 0.537 (raw 0.539, product form 0.510); lmetric 0.600 (raw 0.599, was 0.563). the product form was throwing away most of a long match on the strength of one uncertain block; summing nested survivals keeps it
+    - dynamo cost, the scorer with the most false positives (0.13 of prompt tokens at 15s), is the one it helps: 0.475 vs 0.469 raw at 2.5s mean age, 0.470 vs 0.450 at 5s, 0.457 vs 0.447 at 15s, recovering about 40% of what the stale view cost it. hybrid and lmetric, with fewer false positives, are unchanged within noise
+    - the model's own predicted false positives are still 3-20x below the measured ones here (hybrid 0.041 predicted vs 0.076 measured at 15s, 0.003 vs 0.051 at 2.5s), because the step lifetime says nothing is gone before one turnover of idleness and most evictions happen well before that (p50 8.7s against 14.4s). the treatment therefore barely discounts at the ages where a snapshot actually lies. the residence-cdf lifetime, which the theory check validated, is the next run
+    - rankers unchanged, as before
+
+-  hit rate, corrected survival     P=0     0.5      1       2       5      10      30
+  hybrid raw                      0.597   0.596   0.595   0.593   0.566   0.549   0.539
+  hybrid survival (step)          0.597   0.595   0.590   0.591   0.562   0.546   0.537
+  lmetric raw                     0.673   0.678   0.671   0.666   0.641   0.623   0.599
+  lmetric survival (step)         0.673   0.676   0.666   0.666   0.646   0.621   0.600
+  dynamo cost raw                 0.499   0.497   0.487   0.490   0.469   0.450   0.447
+  dynamo cost survival (step)     0.499   0.497   0.495   0.483   0.475   0.470   0.457
