@@ -37,8 +37,14 @@ from sim.workload import generate
 
 
 def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alpha, worker_kind,
-                    policy_name="longest_prefix"):
-    """Perfect-view run with the eviction log switched on; returns idle times and rates."""
+                    policy_name="longest_prefix", population="all"):
+    """Perfect-view run with the eviction log switched on; returns idle times and rates.
+
+    population picks whose idle times make up the residence distribution:
+    "all" evicted blocks, or only the "reused" ones (re-referenced at least
+    once after insertion). The blocks a router promises are matched prefix
+    blocks, which by construction were reused, so the reused population is the
+    one whose lifetime the survival model should be fed."""
     engine = Engine(seed)
     workers = build_workers(engine, worker_kind, n_workers, cache_blocks)
 
@@ -53,11 +59,20 @@ def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alp
     router.replay(requests)
     engine.run()
 
+    def in_population(inserted_at, last_access):
+        return population == "all" or last_access > inserted_at
+
     idle_before_eviction = np.sort(np.array(
         [evicted_at - last_access
          for worker in workers
-         for _, _, last_access, evicted_at in worker.cache.residence_log]
+         for _, inserted_at, last_access, evicted_at in worker.cache.residence_log
+         if in_population(inserted_at, last_access)]
     ))
+    logged = sum(len(worker.cache.residence_log) for worker in workers)
+    print(
+        f"residence population={population}: {len(idle_before_eviction)} of {logged} evicted blocks, "
+        f"idle p10/p50/p90 = {np.percentile(idle_before_eviction, [10, 50, 90]).round(2).tolist()} s"
+    )
 
     duration = requests[-1].arrival
     evictions = sum(worker.cache.evictions for worker in workers)
@@ -87,7 +102,8 @@ def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alp
     )
 
 
-def fp_versus_age(policy_name, periods, capacities, *, seeds, predict_with, **common):
+def fp_versus_age(policy_name, periods, capacities, *, seeds, predict_with, residence_population="all",
+                  **common):
     """Snapshot views wrapped in a survival view, so each run carries both the
     measured false positives and the model's prediction of them.
 
@@ -97,7 +113,10 @@ def fp_versus_age(policy_name, periods, capacities, *, seeds, predict_with, **co
     rows = {}
 
     for cache_blocks in capacities:
-        residence = residence_times(seed=0, cache_blocks=cache_blocks, policy_name=policy_name, **common)
+        residence = residence_times(
+            seed=0, cache_blocks=cache_blocks, policy_name=policy_name,
+            population=residence_population, **common,
+        )
         turnover = residence["turnover_evictions"]
         residence_cdf = residence["residence_cdf"] if predict_with == "cdf" else None
 
@@ -131,6 +150,7 @@ def main():
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--worker", choices=["sequential", "batched"], default="batched")
     parser.add_argument("--predict-with", choices=["step", "cdf"], default="cdf", help="che's step at the turnover, or the measured residence cdf (default: cdf)")
+    parser.add_argument("--residence-population", choices=["all", "reused"], default="all", help="whose idle times form the residence cdf: every evicted block, or only blocks re-referenced at least once (default: all)")
     parser.add_argument("--output-prefix", default="out/theory_check")
     args = parser.parse_args()
 
@@ -143,7 +163,7 @@ def main():
     os.makedirs("out", exist_ok=True)
 
     # 1. residence times at the reference capacity
-    residence = residence_times(seed=0, cache_blocks=256, **common)
+    residence = residence_times(seed=0, cache_blocks=256, population=args.residence_population, **common)
     print(
         f"residence (C=256): idle-before-eviction p10={np.percentile(residence['idle'], 10):.1f}s "
         f"p50={np.percentile(residence['idle'], 50):.1f}s p90={np.percentile(residence['idle'], 90):.1f}s; "
@@ -153,7 +173,8 @@ def main():
 
     # 2. false positives vs age / T_C, per policy and capacity
     results = {name: fp_versus_age(name, periods, capacities, seeds=args.seeds,
-                                   predict_with=args.predict_with, **common)
+                                   predict_with=args.predict_with,
+                                   residence_population=args.residence_population, **common)
                for name in policy_names}
 
     with open(f"{args.output_prefix}.csv", "w", newline="") as handle:
@@ -185,7 +206,7 @@ def main():
             predicted = [rows[(cache_blocks, period)]["predicted_fp_rate"] for period in periods]
             axis.plot(xs, measured, "o-", color=f"C{index}", label=f"C={cache_blocks} measured")
             axis.plot(xs, predicted, "x--", color=f"C{index}", alpha=0.7, label=f"C={cache_blocks} predicted")
-        axis.set_title(f"view false positives, {name} (prediction: {args.predict_with})")
+        axis.set_title(f"view false positives, {name} (prediction: {args.predict_with}, {args.residence_population})")
         axis.set_xlabel("mean view age / cache turnover")
         axis.set_xscale("symlog", linthresh=0.1)
         axis.grid(alpha=0.3)
