@@ -326,3 +326,36 @@ def test_residence_cdf_is_applied_as_a_hazard_over_the_scrape_interval():
     # while F(10) alone would also say gone, F(4) alone would have said 0.4 for
     # the first block instead of the hazard's 0.4 -- they agree only from idle 0
     assert view.gone_if_not_refreshed(4.0, scrape_age=0.0) == pytest.approx(0.4)
+
+
+def test_snapshot_overlay_sees_the_routers_own_dispatches_until_the_next_refresh():
+    from sim.views import SnapshotView
+
+    engine = Engine(seed=0)
+    worker = build_worker(engine)
+    plain = SnapshotView(engine, worker.cache, period=10.0)
+    overlaid = SnapshotView(engine, worker.cache, period=10.0, overlay=True)
+    engine.run(until=0.0)   # first scrape of an empty cache
+
+    # the router sends a and b at t=1. until the next scrape the plain
+    # snapshot cannot know, the overlay knows at once, with dispatch-time ages
+    engine.now = 1.0
+    for view in (plain, overlaid):
+        view.record_dispatch(("a", "b"), now=1.0)
+    engine.now = 3.0
+
+    assert plain.match(("a", "b")) == 0
+    assert overlaid.match(("a", "b")) == 2
+    assert overlaid.match_with_ages(("a", "b")) == [pytest.approx(2.0), pytest.approx(2.0)]
+
+    # the worker kept a and b but never admitted z. the scrape at t=10 shows
+    # a and b in the copy and drops the overlay, so z is forgotten with it
+    worker.cache.insert(("a", "b"), now=3.0)
+    overlaid.record_dispatch(("z",), now=3.0)
+    assert overlaid.match(("z",)) == 1
+
+    engine.run(until=10.0)
+
+    assert overlaid.refreshes == 2
+    assert overlaid.match(("a", "b")) == 2
+    assert overlaid.match(("z",)) == 0

@@ -49,6 +49,10 @@ class PerfectView(CacheView):
         return self._cache.match_with_ages(blocks, self._engine.now)
 
 
+# an overlay only has to hold one refresh period of dispatches to one worker
+OVERLAY_BLOCKS = 1 << 16
+
+
 class SnapshotView(CacheView):
     """View model A: a copy of the true cache taken every `period` seconds.
 
@@ -60,7 +64,8 @@ class SnapshotView(CacheView):
     never be the thing keeping a run alive.
     """
 
-    def __init__(self, engine, cache: PrefixCache, period: float, phase: float = 0.0):
+    def __init__(self, engine, cache: PrefixCache, period: float, phase: float = 0.0,
+                 overlay: bool = False):
         assert period > 0
 
         self._engine = engine
@@ -72,6 +77,12 @@ class SnapshotView(CacheView):
         self.taken_at = None
         self.refreshes = 0
 
+        # the blind spot of a scrape is everything the router itself sent
+        # since. an overlay remembers those dispatches until the next refresh
+        # shows them in the copy, so the view is never blind to its own
+        # decisions. llm-d calls these speculative entries
+        self._overlay = PrefixCache(OVERLAY_BLOCKS) if overlay else None
+
         engine.schedule(phase, self._refresh, daemon=True)
 
     def _refresh(self) -> None:
@@ -79,7 +90,17 @@ class SnapshotView(CacheView):
         self.taken_at = self._engine.now
         self.refreshes += 1
 
+        # whatever the worker really kept of the overlay is in the copy now;
+        # a dispatch it never admitted before the scrape is a small blind
+        # spot that the next refresh closes
+        if self._overlay is not None:
+            self._overlay = PrefixCache(OVERLAY_BLOCKS)
+
         self._engine.schedule(self._period, self._refresh, daemon=True)
+
+    def record_dispatch(self, blocks, now: float) -> None:
+        if self._overlay is not None:
+            self._overlay.insert(blocks, now=now)
 
     @property
     def age(self) -> float:
@@ -89,18 +110,21 @@ class SnapshotView(CacheView):
         return self._engine.now - self.taken_at
 
     def match(self, blocks) -> int:
-        if self._snapshot is None:
-            return 0
+        scraped = 0 if self._snapshot is None else self._snapshot.match(blocks)
+        dispatched = 0 if self._overlay is None else self._overlay.match(blocks)
 
-        return self._snapshot.match(blocks)
+        return max(scraped, dispatched)
 
     def match_with_ages(self, blocks) -> list[float]:
-        if self._snapshot is None:
-            return []
+        now = self._engine.now
 
         # ages are measured against now, so a block's age includes the time
-        # since the scrape; a re-reference since then is invisible to the view
-        return self._snapshot.match_with_ages(blocks, self._engine.now)
+        # since the scrape; a re-reference since then is invisible to the
+        # copy, though not to the overlay, whose ages are times since dispatch
+        scraped = [] if self._snapshot is None else self._snapshot.match_with_ages(blocks, now)
+        dispatched = [] if self._overlay is None else self._overlay.match_with_ages(blocks, now)
+
+        return scraped if len(scraped) >= len(dispatched) else dispatched
 
 
 class ShadowView(CacheView):
