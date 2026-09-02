@@ -10,10 +10,14 @@ class Router:
     without knowing they exist.
     """
 
-    def __init__(self, engine, policy, workers, view_factory=None):
+    def __init__(self, engine, policy, workers, view_factory=None, tracker=None):
         self.engine = engine
         self.policy = policy
         self.workers = workers
+
+        # per-block reference rates from the router's own dispatches; only the
+        # survival view reads it, so it is optional
+        self.tracker = tracker
 
         # per worker, so a later herd index can ask who got the burst
         self.dispatches = [0] * len(workers)
@@ -29,9 +33,13 @@ class Router:
         chosen = self.policy.choose(req, self.workers)
 
         # estimates first: a view that records dispatches must not get to count
-        # this request's own blocks as already present
+        # this request's own blocks as already present, and the rate tracker
+        # must not count this request's own references either
         self._record_estimates(req, chosen)
         chosen.view.record_dispatch(req.blocks, self.engine.now)
+
+        if self.tracker is not None:
+            self.tracker.observe(req.blocks, self.engine.now)
 
         self.dispatches[chosen.id] += 1
         chosen.submit(req)
@@ -71,3 +79,11 @@ class Router:
 
         # how old the picture behind the estimate was; 0 for a perfect view
         req.view_age_at_dispatch = chosen.view.age
+
+        # a survival view also says how much of its promise it expects to hold
+        match_expected = getattr(chosen.view, "match_expected", None)
+        if match_expected is not None:
+            req.expected_cached_tokens = min(
+                match_expected(req.blocks) * chosen.block_size,
+                float(req.prompt_tokens),
+            )
