@@ -1,3 +1,5 @@
+import math
+
 from .radix import PrefixCache
 
 
@@ -169,16 +171,72 @@ class TtlView(CacheView):
         return self._inner.age
 
 
+class SurvivalView(CacheView):
+    """Weight each block the view reports by the chance it is really still there.
+
+    A block seen at last-access age a has survived if it was re-referenced since
+    (probability 1 - exp(-rate * a)), or, if not, if its residual life outran a
+    (probability 1 - a / T_C under Che's model). So
+
+        S(a) = 1 - exp(-rate * a) * min(a / T_C, 1)
+
+    and the expected surviving prefix match is the sum over depth of the product
+    of the survivals along the path, because a prefix only survives to depth j
+    if every block before it did. match() itself is left ordinal and unchanged;
+    only scorers that add overlap to a load term need the expectation.
+    """
+
+    def __init__(self, inner: CacheView, engine, tracker, turnover: float):
+        assert turnover > 0
+
+        self._inner = inner
+        self._engine = engine
+        self._tracker = tracker
+        self.turnover = turnover
+
+    def survival(self, block, age: float) -> float:
+        rate = self._tracker.rate(block, self._engine.now)
+        gone_if_not_refreshed = min(age / self.turnover, 1.0)
+
+        return 1.0 - math.exp(-rate * age) * gone_if_not_refreshed
+
+    def match_expected(self, blocks) -> float:
+        path_survival = 1.0
+        expected_depth = 0.0
+
+        for block, age in zip(blocks, self._inner.match_with_ages(blocks)):
+            path_survival *= self.survival(block, age)
+            expected_depth += path_survival
+
+        return expected_depth
+
+    def match(self, blocks) -> int:
+        return self._inner.match(blocks)
+
+    def match_with_ages(self, blocks) -> list[float]:
+        return self._inner.match_with_ages(blocks)
+
+    def record_dispatch(self, blocks, now: float) -> None:
+        self._inner.record_dispatch(blocks, now)
+
+    @property
+    def age(self) -> float:
+        return self._inner.age
+
+
 VIEW_KINDS = ("perfect", "snapshot", "shadow")
 
 
-def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None, ttl=None):
+def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None, ttl=None,
+                      tracker=None, turnover=None):
     """Returns a function worker -> CacheView for the requested view model.
 
-    ttl, when given, wraps whichever view is built so entries older than it are
-    not trusted. The perfect view is never wrapped: it has no stale entries to
-    distrust, and wrapping it would only throw away true positives.
+    ttl wraps whichever view is built so entries older than it are not trusted;
+    tracker + turnover wrap it in a survival view instead. The perfect view is
+    never wrapped: it has no stale entries to distrust.
     """
+    assert ttl is None or tracker is None, "ttl and survival are alternatives"
+
     if kind == "perfect":
         return None
 
@@ -192,7 +250,11 @@ def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None, ttl
         known_kinds = ", ".join(VIEW_KINDS)
         raise KeyError(f"unknown view {kind!r}; known views: {known_kinds}")
 
-    if ttl is None:
-        return base
+    if ttl is not None:
+        return lambda worker: TtlView(base(worker), ttl)
 
-    return lambda worker: TtlView(base(worker), ttl)
+    if tracker is not None:
+        assert turnover is not None, "a survival view needs the cache turnover"
+        return lambda worker: SurvivalView(base(worker), engine, tracker, turnover)
+
+    return base

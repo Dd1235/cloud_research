@@ -235,3 +235,32 @@ def test_ttl_wrapped_shadow_forgets_a_dispatch_after_the_ttl():
 
     engine.now = 15.0
     assert view.match(("a", "b")) == 0
+
+
+def test_survival_view_discounts_cold_old_blocks_and_keeps_hot_ones():
+    from sim.blockrates import BlockRateTracker
+    from sim.views import PerfectView, SurvivalView
+
+    engine = Engine(seed=0)
+    worker = build_worker(engine)
+    worker.cache.insert(("hot", "cold"), now=0.0)
+
+    tracker = BlockRateTracker(window=100.0)
+    for reference_time in range(0, 100, 5):      # "hot" is referenced every 5 s
+        tracker.observe(("hot",), now=float(reference_time))
+
+    view = SurvivalView(PerfectView(worker.cache, engine), engine, tracker, turnover=20.0)
+
+    # at age 0 nothing can have been evicted: the expectation equals the raw match
+    engine.now = 0.0
+    assert view.match_expected(("hot", "cold")) == pytest.approx(2.0)
+
+    # at age 20 = one full turnover an unreferenced block is gone for sure, so
+    # the path stops after "hot", which the re-reference rescue keeps at
+    # 1 - exp(-0.2 * 20) = 0.982
+    engine.now = 20.0
+    import math
+    assert view.match_expected(("hot", "cold")) == pytest.approx(1.0 - math.exp(-4.0))
+
+    # and the ordinal match is untouched: rankers never see the discount
+    assert view.match(("hot", "cold")) == 2
