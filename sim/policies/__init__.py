@@ -23,7 +23,11 @@ POLICIES = {
         key_blocks=options.get("key_blocks", 1),
     ),
     LongestPrefix.name: lambda rng, options: LongestPrefix(),
-    Hybrid.name: lambda rng, options: Hybrid(alpha=1.0, beta=1.0),
+    Hybrid.name: lambda rng, options: Hybrid(
+        alpha=1.0,
+        beta=1.0,
+        overlap_source=options.get("overlap_source", "raw"),
+    ),
     DualMap.name: lambda rng, options: DualMap(
         key_blocks=options.get("key_blocks", 1),
     ),

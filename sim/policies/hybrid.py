@@ -1,27 +1,43 @@
 class Hybrid:
+    """score = alpha * overlap - beta * load, both normalised to [0, 1].
+
+    This is the shape every production router uses: a cache term added to a
+    load term with tuned weights. Adding is what makes it fragile to a stale
+    view, because an inflated overlap outvotes the load term outright. The
+    overlap_source switch lets the same scorer read the view's survival-
+    weighted expectation instead of its raw promise, when the view offers one.
+    """
+
     name = "hybrid"
 
-    def __init__(self, alpha: float = 1.0, beta: float = 1.0):
+    def __init__(self, alpha: float = 1.0, beta: float = 1.0, overlap_source: str = "raw"):
+        assert overlap_source in ("raw", "expected")
+
         self.alpha = alpha
         self.beta = beta
+        self.overlap_source = overlap_source
+
+    def overlap(self, req, worker) -> float:
+        if not req.blocks:
+            return 0.0
+
+        if self.overlap_source == "expected":
+            match_expected = getattr(worker.view, "match_expected", None)
+            if match_expected is not None:
+                return match_expected(req.blocks) / len(req.blocks)
+
+        return worker.view.match(req.blocks) / len(req.blocks)
 
     def score(self, req, worker, max_outstanding: int) -> float:
-        overlap = (
-            worker.view.match(req.blocks) / len(req.blocks)
-            if req.blocks
-            else 0.0
-        )
-
         load = (
             worker.outstanding / max_outstanding
             if max_outstanding
             else 0.0
         )
 
-        return self.alpha * overlap - self.beta * load
+        return self.alpha * self.overlap(req, worker) - self.beta * load
 
     def choose(self, req, workers):
-        # both terms are normalised to [0, 1] so alpha and beta are comparable
         max_outstanding = max(
             worker.outstanding
             for worker in workers
