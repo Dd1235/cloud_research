@@ -98,3 +98,24 @@ dualmap hit rate                 64.1%   66.1%   68.9%   72.4%   72.0%   72.2%
 dualmap regret                   0.062   0.054   0.029   0.000   0.000   0.000
 dualmap view fp                  0.001   0.002   0.001   0.000   0.037   0.037
 dualmap TTFT p99                 1.407   1.468   1.307   1.278   1.149   1.195
+
+
+- staleness sweep on the mooncake toolagent trace (2/9/26): first 6000 requests, replayed at their own timestamps (6.04 req/s over 993s), 512-token hash blocks, mean prompt 9.3k tokens (p50 6.4k), mean output 184, block reuse ceiling 0.553, 61% of repeats within 10s. 8 batched workers, max batch 64, chunked prefill 512, 1024 blocks/worker (524k tokens), *uncalibrated placeholder costs* 0.05ms/prompt token, 8ms/iter + 0.25ms/decode step (chosen so the perfect-view system is not saturated: longest prefix p50 0.19s). one seed (only p2c is random on a trace). cache turnover 113-139s. relative comparisons only until the mac calibration. scripts/staleness_sweep.py --trace, out/staleness_toolagent_trace_sweep.png/.csv
+    - staleness barely matters on this trace: a 17s-old view is 0.13 turnovers old, view fp ≤ 1.7%, regret ≤ 0.008. the synthetic sweep's "5% per turnover" holds up in order of magnitude; the turnover here is just 10x longer
+    - longest prefix gets *better* with staleness: hit rate 0.408 → 0.431, queue cv 0.52 → 0.11, p99 6.56 → 5.98. with a fresh view it herds a burst of same-session requests onto the one warm worker; a stale view spreads them and the shared prefix ends up warm on several. herding relief is the dominant effect on a bursty trace
+    - the cache-aware gain over blind is small here: hit rate 0.41-0.43 vs 0.34, p50 0.19-0.21s vs 0.30s, p99 ~6-7s for everyone (the bursts). the trace's reuse ceiling is 0.55 but the fleet holds 8192 blocks against ~180k distinct blocks per hour, so reuse is capacity-limited, not routing-limited
+    - dualmap is catastrophic: p99 279s, queue cv 1.73, hit rate 0.333 (= blind). two rings pin each session to two of eight workers, and this trace delivers sessions as same-instant bursts, so the pinned pair saturates while six workers idle. the robustness it showed on zipf traffic was robustness to *staleness*, not to *burstiness*. note: this is the two-ring core of dualmap without the paper's slo-aware fallback to load-aware routing, which exists for exactly this case
+    - the shadow view herds too: longest prefix + shadow p99 1545s, queue cv 2.64, hit rate below blind. the shadow sees the first request of a burst the moment it is routed, so every same-instant follower matches on that worker and piles on. with the perfect view the followers see nothing (the first is not admitted yet), tie, and spread by outstanding count. "shadow sees in-flight dispatches" was a small benefit on the synthetic workload and is the failure mode here. hybrid + shadow is fine (p99 6.3s) because its load term pushes back
+    - so on bursty agent traffic the ranking of view models inverts: fresh and precise is not the safe choice, and record-insert without a load term is the dangerous one
+
+- toolagent trace                 P=0     0.5      1       2       5      10      30   shadow
+mean view age (s)               0.00    0.50    1.00    1.50    3.04    5.54   17.20    0.00
+longest prefix hit rate        40.8%   40.8%   40.8%   40.8%   42.6%   43.1%   42.4%   32.9%
+longest prefix TTFT p99 (s)     6.56    6.56    6.56    6.56    6.30    6.19    5.98  1545.6
+longest prefix queue cv         0.52    0.52    0.52    0.52    0.26    0.12    0.11    2.64
+hybrid hit rate                41.8%   41.8%   41.8%   41.8%   41.6%   42.3%   41.6%   42.1%
+hybrid TTFT p99 (s)             6.22    6.22    6.22    6.22    6.29    6.39    6.45    6.33
+dualmap hit rate               33.3%   33.3%   33.3%   33.3%   33.4%   33.1%   33.3%   32.9%
+dualmap TTFT p99 (s)          279.0   279.0   278.7   278.9   286.7   298.8   288.6  1545.6
+dualmap queue cv                1.73    1.73    1.73    1.73    1.73    1.73    1.73    2.64
+(blind reference: p2c hit 33.6% p99 6.76, round robin hit 34.4% p99 7.06)
