@@ -77,10 +77,13 @@ def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alp
          if in_population(inserted_at, last_access)]
     ))
     logged = sum(len(worker.cache.residence_log) for worker in workers)
-    print(
-        f"residence population={population}: {len(idle_before_eviction)} of {logged} evicted blocks, "
-        f"idle p10/p50/p90 = {np.percentile(idle_before_eviction, [10, 50, 90]).round(2).tolist()} s"
-    )
+    if len(idle_before_eviction):
+        print(
+            f"residence population={population}: {len(idle_before_eviction)} of {logged} evicted blocks, "
+            f"idle p10/p50/p90 = {np.percentile(idle_before_eviction, [10, 50, 90]).round(2).tolist()} s"
+        )
+    else:
+        print(f"residence population={population}: nothing was evicted, so nothing is ever gone")
 
     duration = requests[-1].arrival
     evictions = sum(worker.cache.evictions for worker in workers)
@@ -99,7 +102,11 @@ def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alp
         per_worker_times.append(che_characteristic_time(rates, cache_blocks))
 
     def residence_cdf(idle_age):
-        # empirical P[evicted by this idle age]
+        # empirical P[evicted by this idle age]; a cache that never evicted
+        # has no distribution to speak of, and nothing in it is ever gone
+        if len(idle_before_eviction) == 0:
+            return 0.0
+
         return float(np.searchsorted(idle_before_eviction, idle_age, side="right") / len(idle_before_eviction))
 
     return dict(
