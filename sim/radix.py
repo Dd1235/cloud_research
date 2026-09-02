@@ -61,6 +61,32 @@ class PrefixCache:
         self._evict(protect)
         return created
 
+    def copy(self) -> "PrefixCache":
+        """A snapshot: the same blocks with the same recency, in independent nodes.
+
+        This is what a router holds when it reads a worker's cache through a
+        periodic scrape, so it has to be a real copy that the worker's later
+        inserts and evictions cannot reach. Iterative rather than recursive
+        because a long prompt makes a deep path. evictions stays 0: a snapshot
+        never evicted anything.
+        """
+        snapshot = PrefixCache(self.capacity)
+        snapshot.size = self.size
+        snapshot.root.last_access = self.root.last_access
+
+        pending = [(self.root, snapshot.root)]
+
+        while pending:
+            source, target = pending.pop()
+
+            for block, source_child in source.children.items():
+                target_child = _Node(block, target)
+                target_child.last_access = source_child.last_access
+                target.children[block] = target_child
+                pending.append((source_child, target_child))
+
+        return snapshot
+
     def _leaves(self):
         stack = [self.root]
 
