@@ -7,6 +7,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from theory_check import residence_times
 from compare_policies import (
     C_DECODE_BATCHED,
     C_PREFILL,
@@ -33,18 +34,48 @@ PERFECT = 0.0
 TREATMENTS = ("raw", "ttl", "survival")
 
 
-def treatment_settings(treatment: str, turnover: float, ttl_turnovers: float) -> dict:
+def treatment_settings(treatment: str, turnover: float, ttl_turnovers: float,
+                       residence_cdf=None) -> dict:
     if treatment == "raw" or turnover == float("inf"):
         return {}
 
     if treatment == "ttl":
         return dict(view_ttl=ttl_turnovers * turnover)
 
-    return dict(survival_turnover=turnover)
+    return dict(survival_turnover=turnover, residence_cdf=residence_cdf)
+
+
+def survival_lifetime_cdf(policy_name, treatment, survival_lifetime, *, zipf_alpha, **common):
+    """None for Che's step lifetime, else the residence-time cdf of this policy.
+
+    The theory check found the step is the wrong lifetime for a radix cache:
+    leaves die well before one turnover of idleness, so a step discounts
+    nothing at the ages where a snapshot actually lies. The cdf is measured on
+    a perfect-view run of the same policy and capacity, which is what a
+    deployment would do once, offline, from its own eviction log.
+    """
+    if treatment != "survival" or survival_lifetime == "step":
+        return None
+
+    if common.get("workload") is not None:
+        raise SystemExit("the cdf lifetime is measured on the synthetic workload only, for now")
+
+    residence = residence_times(
+        seed=0,
+        policy_name=policy_name,
+        zipf_alpha=zipf_alpha,
+        n_workers=common["n_workers"],
+        rate=common["rate"],
+        n_requests=common["n_requests"],
+        cache_blocks=common["cache_blocks"],
+        worker_kind=common.get("worker_kind", "batched"),
+    )
+    return residence["residence_cdf"]
 
 
 def sweep_policy(policy_name, periods, *, seeds: int, treatment: str = "raw",
-                 ttl_turnovers: float = 1.0, turnover: float | None = None, **common):
+                 ttl_turnovers: float = 1.0, turnover: float | None = None, residence_cdf=None,
+                 **common):
     """{period: median row}. period 0 means the perfect view.
 
     The perfect view is always run raw: it has no stale entries to treat. Its
@@ -78,7 +109,7 @@ def sweep_policy(policy_name, periods, *, seeds: int, treatment: str = "raw",
                 seed=seed,
                 view_kind="snapshot",
                 view_period=period,
-                **treatment_settings(treatment, turnover, ttl_turnovers),
+                **treatment_settings(treatment, turnover, ttl_turnovers, residence_cdf),
                 **common,
             )
             for seed in range(seeds)
@@ -90,13 +121,13 @@ def sweep_policy(policy_name, periods, *, seeds: int, treatment: str = "raw",
 
 
 def run_shadow(policy_name, *, seeds: int, treatment: str = "raw", ttl_turnovers: float = 1.0,
-               turnover: float = float("inf"), **common):
+               turnover: float = float("inf"), residence_cdf=None, **common):
     rows = [
         run(
             policy_name,
             seed=seed,
             view_kind="shadow",
-            **treatment_settings(treatment, turnover, ttl_turnovers),
+            **treatment_settings(treatment, turnover, ttl_turnovers, residence_cdf),
             **common,
         )
         for seed in range(seeds)
@@ -151,7 +182,7 @@ def print_row(label, period, row):
 
 
 def sweep(policy_names, reference_names, periods, zipfs, *, include_shadow, seeds,
-          treatment="raw", ttl_turnovers=1.0, **common):
+          treatment="raw", ttl_turnovers=1.0, survival_lifetime="step", **common):
     """Everything the figures need, keyed by (zipf, policy, period)."""
     results = {}
     turnovers = {}
@@ -160,8 +191,12 @@ def sweep(policy_names, reference_names, periods, zipfs, *, include_shadow, seed
         settings = dict(zipf_alpha=zipf_alpha, seeds=seeds, **common)
 
         for policy_name in policy_names:
+            residence_cdf = survival_lifetime_cdf(
+                policy_name, treatment, survival_lifetime, zipf_alpha=zipf_alpha, **common,
+            )
             rows_by_period = sweep_policy(
-                policy_name, periods, treatment=treatment, ttl_turnovers=ttl_turnovers, **settings,
+                policy_name, periods, treatment=treatment, ttl_turnovers=ttl_turnovers,
+                residence_cdf=residence_cdf, **settings,
             )
 
             for period, row in rows_by_period.items():
@@ -179,7 +214,8 @@ def sweep(policy_names, reference_names, periods, zipfs, *, include_shadow, seed
             if include_shadow:
                 row = run_shadow(
                     policy_name, treatment=treatment, ttl_turnovers=ttl_turnovers,
-                    turnover=turnovers[(zipf_alpha, policy_name)], **settings,
+                    turnover=turnovers[(zipf_alpha, policy_name)], residence_cdf=residence_cdf,
+                    **settings,
                 )
                 results[(zipf_alpha, policy_name, "shadow")] = row
                 print_row(f"{policy_name} a={zipf_alpha}", "shadow", row)
@@ -354,6 +390,7 @@ def main():
     parser.add_argument("--max-batch", type=int, default=16, help="batched worker: sequences resident at once (default: 16)")
     parser.add_argument("--session-depth", type=int, default=1, help="session hash and dualmap: leading blocks that identify a session (default: 1)")
     parser.add_argument("--treatment", choices=TREATMENTS, default="raw", help="how stale view entries are read: raw, ttl at k turnovers, or survival weighted (default: raw)")
+    parser.add_argument("--survival-lifetime", choices=["step", "cdf"], default="step", help="survival treatment: che's step at the turnover, or the residence cdf measured on the policy's perfect run (default: step)")
     parser.add_argument("--ttl-turnovers", type=float, default=1.0, help="ttl treatment: ttl as a multiple of the measured cache turnover (default: 1.0)")
     parser.add_argument("--overlap-source", choices=["raw", "expected"], default="raw", help="cardinal scorers read the view's raw promise or its survival expectation (default: raw)")
     parser.add_argument("--kv-available-at", choices=["admission", "prefill_done"], default="admission", help="batched worker: when a request's blocks become reusable (default: admission)")
@@ -413,6 +450,7 @@ def main():
         seeds=seeds,
         treatment=args.treatment,
         ttl_turnovers=args.ttl_turnovers,
+        survival_lifetime=args.survival_lifetime,
         rate=rate,
         **common,
     )
@@ -445,6 +483,10 @@ def main():
                 seeds=args.seeds,
                 treatment=args.treatment,
                 ttl_turnovers=args.ttl_turnovers,
+                residence_cdf=survival_lifetime_cdf(
+                    policy_name, args.treatment, args.survival_lifetime,
+                    zipf_alpha=zipfs[0], rate=rate, **common,
+                ),
                 rate=rate,
                 zipf_alpha=zipfs[0],
                 **common,
