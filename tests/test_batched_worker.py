@@ -156,6 +156,46 @@ def test_cached_prefix_removes_the_prefill_cost():
     assert second.first_token - second.start == pytest.approx(C_ITER + C_DECODE)
 
 
+def run_long_prompt_arriving_mid_decode(prefill_budget):
+    """A steadily decoding request, interrupted by a 1000 token prompt.
+
+    Without chunking the whole prompt is prefilled in one iteration, and every
+    other resident sequence waits out that entire iteration. This is the stall
+    that chunked prefill exists to remove.
+    """
+    engine = Engine(seed=0)
+    worker = build_worker(engine, prefill_budget=prefill_budget)
+
+    decoding = build_request(1, prompt_tokens=10, output_tokens=200)
+    long_prompt = build_request(2, prompt_tokens=1000, output_tokens=1)
+
+    worker.submit(decoding)
+    engine.schedule(0.5, worker.submit, long_prompt)
+    engine.run()
+
+    return decoding, long_prompt, worker
+
+
+def test_chunked_prefill_cuts_the_worst_stall_without_changing_mean_tpot():
+    unchunked, unchunked_long, _ = run_long_prompt_arriving_mid_decode(None)
+    chunked, chunked_long, _ = run_long_prompt_arriving_mid_decode(100)
+
+    # one iteration swallowing 1000 prompt tokens costs 0.01 * 1000 = 10s, and
+    # the decoding request gets nothing for that whole time
+    assert max(unchunked.tbt_gaps) > 10.0
+
+    # spread over ten chunks, the worst gap is about a tenth of that
+    assert max(chunked.tbt_gaps) < 0.15 * max(unchunked.tbt_gaps)
+
+    # the total decode work never changed, so the mean per token latency barely
+    # moves. this is why tpot alone would have hidden the stall completely
+    assert chunked.tpot == pytest.approx(unchunked.tpot, rel=0.05)
+
+    # the long prompt pays for it: its own first token arrives later, because it
+    # now shares each iteration with the decoding request
+    assert chunked_long.first_token > unchunked_long.first_token
+
+
 def test_max_batch_limits_how_many_run_together():
     engine = Engine(seed=0)
     worker = build_worker(engine, max_batch=2)

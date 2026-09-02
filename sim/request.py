@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -14,6 +14,10 @@ class Request:
     start: float | None = None # prefill starts
     first_token: float | None = None
     finish: float | None = None
+
+    # when each output token was emitted. only the batching worker fills this in,
+    # because only there can a token be delayed by work done for other requests
+    token_times: list = field(default_factory=list)
 
     @property
     def done(self) -> bool:
@@ -31,5 +35,14 @@ class Request:
     @property
     def tpot(self) -> float:
         return (self.finish - self.first_token) / max(self.output_tokens - 1, 1,)
+
+    # tpot is a mean, so a single long stall averages away. these are the actual
+    # gaps between consecutive tokens, which is what a reader would notice
+    @property
+    def tbt_gaps(self) -> list[float]:
+        return [
+            later - earlier
+            for earlier, later in zip(self.token_times, self.token_times[1:])
+        ]
 
     

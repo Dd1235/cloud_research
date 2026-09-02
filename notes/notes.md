@@ -24,3 +24,15 @@
 
 
 - in our 2/9/26 sim, p2c is better over random, but not round robin in homogeneous case, that is because round-robin splits a poisson stream deterministically, there is lower variance, and there is lower queueing. 
+
+- tbt - time between tokens. long gaps can get averaged away in tpot
+
+
+* **Chunked prefill** splits a long prompt across multiple decode iterations instead of processing it all at once.
+* This greatly reduces long pauses between generated tokens. Example: worst gap went **10s → 0.52s**.
+* **TPOT stays unchanged** because it’s an average; it hides occasional huge stalls. So `tbt_p99` is a better user-experience metric.
+* Chunking slightly worsens the long request’s own **TTFT**, because its prompt takes more iterations to finish.
+* For short ~600-token prompts, chunking is actually worse because there wasn’t much stall to fix. For ~8k prompts, it helps massively (**16.8s → 0.29s TBT p99**).
+* `NO_TOKEN` means: during a partial prefill iteration, that request did computation but **did not generate a token**. So you must not record `token_time` or decrement `tokens_left`.
+
+Core takeaway: **chunking trades a bit of TTFT for much smoother token streaming, but only becomes worthwhile for sufficiently long prompts.**

@@ -17,6 +17,16 @@ def summarize(
     ttft = np.asarray([req.ttft for req in done])
     tpot = np.asarray([req.tpot for req in done])
 
+    # every gap between consecutive tokens, pooled over all requests. empty for
+    # the sequential worker, which does not record per token times
+    tbt_gaps = np.asarray(
+        [
+            gap
+            for req in done
+            for gap in req.tbt_gaps
+        ]
+    )
+
 
     tokens_processed = sum(
         worker.tokens_processed
@@ -39,6 +49,11 @@ def summarize(
         "ttft_p99": float(np.percentile(ttft, 99)),
         "tpot_p50": float(np.percentile(tpot, 50)),
         "tpot_p99": float(np.percentile(tpot, 99)),
+        "tbt_p99": (
+            float(np.percentile(tbt_gaps, 99))
+            if tbt_gaps.size
+            else 0.0
+        ),
         "hit_rate": (
             tokens_reused / tokens_processed
             if tokens_processed

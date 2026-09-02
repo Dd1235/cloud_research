@@ -25,7 +25,13 @@ C_ITER_BATCHED = 8e-3
 C_DECODE_BATCHED = C_DECODE_SEQUENTIAL - C_ITER_BATCHED
 
 
-def build_workers(engine, worker_kind: str, n_workers: int, cache_blocks: int):
+def build_workers(
+    engine,
+    worker_kind: str,
+    n_workers: int,
+    cache_blocks: int,
+    prefill_budget: int | None = None,
+):
     if worker_kind == "sequential":
         return [
             Worker(
@@ -46,6 +52,7 @@ def build_workers(engine, worker_kind: str, n_workers: int, cache_blocks: int):
             c_decode=C_DECODE_BATCHED,
             c_iter=C_ITER_BATCHED,
             cache_blocks=cache_blocks,
+            prefill_budget=prefill_budget,
         )
         for worker_id in range(n_workers)
     ]
@@ -61,6 +68,7 @@ def run(
     cache_blocks: int,
     zipf_alpha: float,
     worker_kind: str = "sequential",
+    prefill_budget: int | None = None,
 ):
 
     engine = Engine(seed)
@@ -70,6 +78,7 @@ def run(
         worker_kind,
         n_workers,
         cache_blocks,
+        prefill_budget,
     )
 
     policy = make_policy(
@@ -190,6 +199,12 @@ if __name__ == "__main__":
         default="sequential",
         help="worker model: one request at a time, or continuous batching",
     )
+    parser.add_argument(
+        "--prefill-budget",
+        type=int,
+        default=0,
+        help="batched worker only: prompt tokens per iteration, 0 for unchunked",
+    )
     args = parser.parse_args()
 
     main(
@@ -201,4 +216,5 @@ if __name__ == "__main__":
         cache_blocks=args.cache_blocks,
         zipf_alpha=args.zipf,
         worker_kind=args.worker,
+        prefill_budget=args.prefill_budget or None,
     )

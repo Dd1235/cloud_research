@@ -7,6 +7,7 @@ from .request import Request
 # which output token a resident sequence produced during one iteration
 FIRST_TOKEN = "first_token"
 DECODE_STEP = "decode_step"
+NO_TOKEN = "no_token"  # still working through its prompt, nothing emitted yet
 
 
 class _Sequence:
@@ -62,6 +63,7 @@ class BatchedWorker:
         cache_blocks: int = 1,
         block_size: int = 16,
         max_batch: int = 16,
+        prefill_budget: int | None = None,
     ):
         self.engine = engine
         self.id = wid
@@ -71,6 +73,9 @@ class BatchedWorker:
 
         self.block_size = block_size
         self.max_batch = max_batch
+        # most prompt tokens one iteration may process. None means a prompt is
+        # prefilled in a single iteration, however long it is
+        self.prefill_budget = prefill_budget
         self.cache = PrefixCache(cache_blocks)
 
         self.queue = deque()
@@ -152,19 +157,33 @@ class BatchedWorker:
         decode_steps = 0
         actions = []
 
+        budget_left = (
+            self.prefill_budget
+            if self.prefill_budget is not None
+            else float("inf")
+        )
+
         for sequence in self.running:
+            if sequence.prefill_left > 0:
+                # take as much of the remaining prompt as the budget allows. with
+                # no budget this is the whole prompt and the iteration becomes as
+                # long as the prompt, which is what stalls everyone else
+                chunk = min(sequence.prefill_left, budget_left)
+                sequence.prefill_left -= chunk
+                prefill_tokens += chunk
+                budget_left -= chunk
+
+                if sequence.prefill_left > 0:
+                    # prompt not finished, so no token comes out this iteration
+                    actions.append((sequence, NO_TOKEN))
+                    continue
+            else:
+                decode_steps += 1
+
             # a sequence emits its first token in the iteration that finishes its
             # prefill. a fully cached prompt has no prefill work left at all, but
             # still needs this one forward pass to produce that first token
             emits_first_token = sequence.req.first_token is None
-
-            if sequence.prefill_left > 0:
-                # the whole remaining prompt is prefilled in this one iteration;
-                # splitting it across iterations is chunked prefill, added later
-                prefill_tokens += sequence.prefill_left
-                sequence.prefill_left = 0
-            else:
-                decode_steps += 1
 
             actions.append(
                 (
@@ -192,9 +211,13 @@ class BatchedWorker:
         now = self.engine.now
 
         for sequence, action in actions:
+            if action is NO_TOKEN:
+                continue
+
             if action is FIRST_TOKEN:
                 sequence.req.first_token = now
 
+            sequence.req.token_times.append(now)
             sequence.tokens_left -= 1
 
             if sequence.tokens_left <= 0:
