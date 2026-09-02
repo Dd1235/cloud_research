@@ -36,7 +36,8 @@ from sim.workload import generate
 #      axis, and the survival view's own prediction should sit on the curve
 
 
-def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alpha, worker_kind):
+def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alpha, worker_kind,
+                    policy_name="longest_prefix"):
     """Perfect-view run with the eviction log switched on; returns idle times and rates."""
     engine = Engine(seed)
     workers = build_workers(engine, worker_kind, n_workers, cache_blocks)
@@ -45,58 +46,66 @@ def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alp
         worker.cache = PrefixCache(cache_blocks, record_residence=True)
         worker.view = worker.cache   # the router re-installs a perfect view below
 
-    policy = make_policy("longest_prefix", np.random.default_rng(seed + POLICY_SEED_OFFSET))
+    policy = make_policy(policy_name, np.random.default_rng(seed + POLICY_SEED_OFFSET))
     requests = generate(np.random.default_rng(seed), n_requests, rate, zipf_alpha=zipf_alpha)
     router = Router(engine, policy, workers)
     OutstandingSampler(engine, workers)
     router.replay(requests)
     engine.run()
 
-    idle_before_eviction = np.array(
+    idle_before_eviction = np.sort(np.array(
         [evicted_at - last_access
          for worker in workers
          for _, _, last_access, evicted_at in worker.cache.residence_log]
-    )
+    ))
 
     duration = requests[-1].arrival
     evictions = sum(worker.cache.evictions for worker in workers)
 
-    # per-block request rates over the run, per worker: a block's rate at the
-    # worker that holds it is what Che's fixed point wants. approximate by the
-    # fleet rate divided by the number of workers a prefix is spread over,
-    # which for longest prefix is close to one
+    # Che's fixed point wants each block's request rate *at the worker that
+    # holds it*. every request records where it went, so count references per
+    # (worker, block) and solve one fixed point per worker
     references = {}
     for req in requests:
         for block in req.blocks:
-            references[block] = references.get(block, 0) + 1
-    block_rates = [count / duration for count in references.values()]
+            references[(req.worker_id, block)] = references.get((req.worker_id, block), 0) + 1
+
+    per_worker_times = []
+    for worker in workers:
+        rates = [count / duration for (worker_id, _), count in references.items() if worker_id == worker.id]
+        per_worker_times.append(che_characteristic_time(rates, cache_blocks))
+
+    def residence_cdf(idle_age):
+        # empirical P[evicted by this idle age]
+        return float(np.searchsorted(idle_before_eviction, idle_age, side="right") / len(idle_before_eviction))
 
     return dict(
         idle=idle_before_eviction,
         turnover_evictions=turnover_from_evictions(cache_blocks, evictions // n_workers, duration),
-        turnover_che=che_characteristic_time(block_rates, cache_blocks),
+        turnover_che=float(np.mean(per_worker_times)),
+        residence_cdf=residence_cdf,
     )
 
 
-def fp_versus_age(policy_name, periods, capacities, *, seeds, treatment_turnover, **common):
+def fp_versus_age(policy_name, periods, capacities, *, seeds, predict_with, **common):
     """Snapshot views wrapped in a survival view, so each run carries both the
-    measured false positives and the model's prediction of them."""
+    measured false positives and the model's prediction of them.
+
+    predict_with is "step" (Che's deterministic lifetime at the measured
+    turnover) or "cdf" (the residence-time distribution measured on a
+    perfect-view run of the same policy and capacity)."""
     rows = {}
 
     for cache_blocks in capacities:
-        perfect = median_across_seeds(
-            [run(policy_name, seed=seed, view_kind="perfect", cache_blocks=cache_blocks, **common)
-             for seed in range(seeds)]
-        )
-        duration = common["n_requests"] / common["rate"]
-        turnover = turnover_from_evictions(
-            cache_blocks, perfect["evictions"] // common["n_workers"], duration,
-        )
+        residence = residence_times(seed=0, cache_blocks=cache_blocks, policy_name=policy_name, **common)
+        turnover = residence["turnover_evictions"]
+        residence_cdf = residence["residence_cdf"] if predict_with == "cdf" else None
 
         for period in periods:
             row = median_across_seeds(
                 [run(policy_name, seed=seed, view_kind="snapshot", view_period=period,
-                     survival_turnover=turnover, cache_blocks=cache_blocks, **common)
+                     survival_turnover=turnover, residence_cdf=residence_cdf,
+                     cache_blocks=cache_blocks, **common)
                  for seed in range(seeds)]
             )
             rows[(cache_blocks, period)] = dict(row, turnover=turnover)
@@ -121,6 +130,7 @@ def main():
     parser.add_argument("--requests", type=int, default=3000)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--worker", choices=["sequential", "batched"], default="batched")
+    parser.add_argument("--predict-with", choices=["step", "cdf"], default="cdf", help="che's step at the turnover, or the measured residence cdf (default: cdf)")
     parser.add_argument("--output-prefix", default="out/theory_check")
     args = parser.parse_args()
 
@@ -143,7 +153,7 @@ def main():
 
     # 2. false positives vs age / T_C, per policy and capacity
     results = {name: fp_versus_age(name, periods, capacities, seeds=args.seeds,
-                                   treatment_turnover=None, **common)
+                                   predict_with=args.predict_with, **common)
                for name in policy_names}
 
     with open(f"{args.output_prefix}.csv", "w", newline="") as handle:
@@ -175,7 +185,7 @@ def main():
             predicted = [rows[(cache_blocks, period)]["predicted_fp_rate"] for period in periods]
             axis.plot(xs, measured, "o-", color=f"C{index}", label=f"C={cache_blocks} measured")
             axis.plot(xs, predicted, "x--", color=f"C{index}", alpha=0.7, label=f"C={cache_blocks} predicted")
-        axis.set_title(f"view false positives, {name}")
+        axis.set_title(f"view false positives, {name} (prediction: {args.predict_with})")
         axis.set_xlabel("mean view age / cache turnover")
         axis.set_xscale("symlog", linthresh=0.1)
         axis.grid(alpha=0.3)
