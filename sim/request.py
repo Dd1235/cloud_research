@@ -24,6 +24,7 @@ class Request:
     estimated_cached_tokens: int | None = None        # what the view promised on the chosen worker
     true_cached_tokens_at_dispatch: int | None = None # what that worker really held at that instant
     best_cached_tokens_at_dispatch: int | None = None # the most any worker really held at that instant
+    view_age_at_dispatch: float | None = None         # seconds since the view last saw the true cache
 
     @property
     def done(self) -> bool:

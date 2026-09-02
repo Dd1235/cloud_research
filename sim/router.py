@@ -68,3 +68,6 @@ class Router:
             cached_tokens_for(worker.cache.match(req.blocks), worker)
             for worker in self.workers
         )
+
+        # how old the picture behind the estimate was; 0 for a perfect view
+        req.view_age_at_dispatch = chosen.view.age
