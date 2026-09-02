@@ -21,3 +21,6 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# --- downloaded traces (scripts/fetch_traces.sh) ---
+/traces/
