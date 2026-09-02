@@ -1,7 +1,6 @@
 import pytest
 
 from sim.engine import Engine
-from sim.metrics import summarize
 from sim.policies.longest_prefix import LongestPrefix
 from sim.request import Request
 from sim.router import Router
@@ -84,12 +83,10 @@ def test_stale_view_sends_a_warm_prefix_to_a_cold_worker():
         )
         engine.run()
 
-        return sum(worker.tokens_reused for worker in workers), summarize(
-            [], workers, warmup_frac=0.0
-        )
+        return sum(worker.tokens_reused for worker in workers)
 
-    fresh_reuse, _ = reuse_with("perfect")
-    stale_reuse, _ = reuse_with("snapshot")
+    fresh_reuse = reuse_with("perfect")
+    stale_reuse = reuse_with("snapshot")
 
     # with the truth, longest prefix waits for the warm worker and reuses the
     # prefix; with a 30 s old (empty) snapshot both workers look cold and the
