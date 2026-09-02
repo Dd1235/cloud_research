@@ -33,21 +33,28 @@ PERFECT = 0.0
 # dispatches since the scrape overlaid (the fix for the view's blind spot
 # rather than for its stale promises). ttl and survival need the cache
 # turnover, which the perfect-view run of the same policy measures first
-TREATMENTS = ("raw", "ttl", "survival", "overlay")
+TREATMENTS = ("raw", "ttl", "survival", "overlay", "overlay_survival")
 
 
 def treatment_settings(treatment: str, turnover: float, ttl_turnovers: float,
                        residence_cdf=None) -> dict:
-    if treatment == "overlay":
-        return dict(view_overlay=True)
+    """What run() needs for a treatment. overlay_survival is the complete
+    repair of a scrape: the overlay closes its blind spot, the survival weight
+    discounts the promises that have gone stale since."""
+    settings = {}
 
-    if treatment == "raw" or turnover == float("inf"):
-        return {}
+    if treatment.startswith("overlay"):
+        settings["view_overlay"] = True
+
+    if treatment in ("raw", "overlay") or turnover == float("inf"):
+        return settings
 
     if treatment == "ttl":
-        return dict(view_ttl=ttl_turnovers * turnover)
+        settings["view_ttl"] = ttl_turnovers * turnover
+    else:
+        settings.update(survival_turnover=turnover, residence_cdf=residence_cdf)
 
-    return dict(survival_turnover=turnover, residence_cdf=residence_cdf)
+    return settings
 
 
 def survival_lifetime_cdf(policy_name, treatment, survival_lifetime, *, zipf_alpha, **common):
@@ -59,7 +66,7 @@ def survival_lifetime_cdf(policy_name, treatment, survival_lifetime, *, zipf_alp
     a perfect-view run of the same policy and capacity, which is what a
     deployment would do once, offline, from its own eviction log.
     """
-    if treatment != "survival" or survival_lifetime == "step":
+    if treatment not in ("survival", "overlay_survival") or survival_lifetime == "step":
         return None
 
     if common.get("workload") is not None:
