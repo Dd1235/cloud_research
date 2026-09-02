@@ -169,3 +169,19 @@ lmetric survival                   0.676   0.666   0.666   0.642   0.611   0.563
 dynamo raw                         0.497   0.487   0.490   0.469   0.450   0.447
 dynamo survival                    0.496   0.496   0.480   0.471   0.458   0.439
 longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
+
+
+- theory check (2/9/26, E11): does the router's view age at the cache's characteristic time? longest prefix and hybrid, 4 batched workers, 6 req/s, zipf 0.9, cache 128 / 256 / 512 / 1024 blocks, snapshot periods 0.5..30s, 3 seeds. the perfect-view run logs every eviction (block, inserted, last access, evicted). scripts/theory_check.py, out/theory_check.png/.csv
+    - cache turnover (capacity / eviction rate) scales with capacity as it should: longest prefix 4.9 / 14.4 / 34.5 / 75.0s at 128 / 256 / 512 / 1024 blocks; hybrid 3.8 / 10.1 / 27.2 / 67.9s, shorter at every size because it spreads prefixes and churns
+    - che's picture is too clean for a radix cache. idle time before eviction at 256 blocks: p10 5.6s, p50 8.7s, p90 13.0s, against a 14.4s turnover. the cache evicts leaves first, and leaves are the unique tail of a prompt while the shared beginning sits near the root, so the garnish goes long before the base sauce. che's fixed point from per-worker block rates gives 7.5s, close to the median, not the turnover
+    - age / turnover linearises every false-positive curve at every capacity (measured fp is ~linear in it up to about one turnover), but the curves do not collapse: at the same age / turnover, fp is higher for a small cache (128: 0.040 at 0.2 turnovers; 256: 0.018 at 0.17; 512: 0.004 at 0.15). the slope is the share of promised blocks that are cold, and a bigger cache promises mostly hot prefix blocks. so the law is fp ≈ (cold share) x age / turnover, with a workload- and capacity-dependent coefficient, not a universal curve
+    - the model's own prediction of fp is off in both directions depending on the assumption. che's deterministic lifetime (a block is gone iff its idle age exceeds the turnover) under-predicts by ~5x at moderate age (256 blocks, age 2.5s: predicted 0.003, measured 0.018), because blocks die well before the turnover. the measured residence distribution, applied correctly as the hazard over the scrape interval, over-predicts by 10-20x at small ages (256 blocks, age 0.25s: predicted 0.042, measured 0.002). the second error is a population mismatch: the residence distribution is measured on *evicted* blocks, mostly short-lived leaves, while the blocks a router promises are matched prefix blocks, the long-lived survivors. their hazard is an order of magnitude lower
+    - so: the mechanism (view error grows with age in units of cache turnover, slope = cold share) is confirmed and explains the staleness sweep and hybrid's extra sensitivity; the quantitative predictor needs the residence distribution of the *promised* population, e.g. conditioned on depth in the tree or on having been re-referenced. that is the next iteration of the model, and until then the formula is a shape, not a number
+
+-  view fp, longest prefix     age/T_C   measured   predicted (step)   predicted (cdf, hazard)
+  C=256, P=0.5                  0.017     0.0021        0.0030              0.0418
+  C=256, P=5                    0.173     0.0180        0.0025              0.1425
+  C=256, P=30                   1.038     0.0525        0.0638              0.1260
+  C=128, P=5                    0.507     0.0673        0.0889              0.2928
+  C=512, P=30                   0.435     0.0127        0.0096              0.0597
+  C=1024, P=30                  0.200     0.0040        0.0000              0.0137
