@@ -46,7 +46,7 @@ Build a trace-driven simulator and router that study how KV-cache-aware routing 
 
 **Goal:** Identify policies that retain cache benefits without creating severe hotspots under stale views.
 
-**Resources:** [DualMap](https://arxiv.org/abs/2602.06502), [Preble](https://arxiv.org/abs/2307.03169), [LMETRIC](https://arxiv.org/abs/2603.15202)
+**Resources:** [DualMap](https://arxiv.org/abs/2602.06502), [Preble](https://arxiv.org/abs/2407.00023), [LMETRIC](https://arxiv.org/abs/2603.15202)
 
 ### 5. Evaluate online learning
 
