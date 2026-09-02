@@ -121,3 +121,24 @@ dualmap TTFT p99 (s)            6.06    6.06    6.06    6.06    6.06    6.09    
 dualmap queue cv                0.09    0.09    0.09    0.09    0.09    0.09    0.09    0.09
 (dualmap with the one-block key, for the record: hit 33.3%, p99 279s, queue cv 1.73 at every age)
 (blind reference: p2c hit 33.6% p99 6.76, round robin hit 34.4% p99 7.06)
+
+
+- staleness sweep on the mooncake conversation trace (2/9/26): first 6000 requests at their own timestamps (3.21 req/s over 1872s), mean prompt 12.8k tokens (p50 7.6k, max 123k), mean output 347, block reuse ceiling 0.366, repeat gap p50 114s, and *every* request starts with the same block (a system prompt). same 8 uncalibrated batched workers as the toolagent run, session depth 16, one seed. cache turnover 128-131s. out/staleness_conversation_trace_sweep.png/.csv
+    - cache-aware routing triples reuse over blind: hit rate 0.180 (longest prefix), 0.167 (hybrid), 0.165 (dualmap) vs 0.064. it is still well under the 0.37 ceiling because the typical repeat comes 114s later and the cache turns over in 130s: about half the reuse opportunities fall outside the cache lifetime. capacity-limited, not routing-limited
+    - the latency gain is modest and only at the median: p50 0.61s vs 0.65 (round robin) / 0.78 (p2c); p99 6.8-7.5s for every policy, set by 100k-token prompts and bursts, not by routing
+    - staleness is irrelevant again: view fp ≤ 1.7% at 16.6s mean age (0.13 turnovers), hit rate 0.180 → 0.174, regret ≤ 0.006. same order as toolagent and as the synthetic "5% per turnover"
+    - no herding relief here, unlike toolagent: longest prefix queue cv is 0.12 flat. with repeats 114s apart there is no burst to herd. the two traces bracket the mechanism: staleness *helps* pure affinity exactly when repeats arrive faster than the router can spread them
+    - dualmap with the deep key: hit rate 0.165, queue cv 0.10, flat across staleness; with the one-block key it was hit 0.048 and p50 451s, because all 6000 requests share block 0
+    - longest prefix + shadow explodes here too: p50 2017s, queue cv 2.65, hit rate 0.044 (below blind). one universal first block, record-insert, pure ranking. hybrid + shadow and dualmap + shadow are unaffected
+
+- conversation trace              P=0     0.5      1       2       5      10      30   shadow
+mean view age (s)               0.00    0.50    1.00    1.51    3.02    5.52   16.62    0.00
+longest prefix hit rate        18.0%   18.0%   18.0%   18.0%   18.6%   18.3%   17.4%    4.4%
+longest prefix TTFT p50 (s)    0.605   0.605   0.605   0.605   0.613   0.635   0.636  2017.2
+longest prefix queue cv         0.12    0.12    0.12    0.12    0.11    0.13    0.12    2.65
+hybrid hit rate                16.7%   16.7%   16.7%   16.7%   16.5%   16.7%   16.0%   16.6%
+hybrid TTFT p50 (s)            0.618   0.618   0.618   0.618   0.635   0.638   0.640   0.637
+dualmap hit rate (depth 16)    16.5%   16.5%   16.5%   16.5%   16.6%   16.4%   16.4%   16.5%
+dualmap TTFT p50 (s)           0.665   0.665   0.665   0.665   0.668   0.666   0.658   0.667
+dualmap queue cv                0.10    0.10    0.10    0.10    0.10    0.10    0.10    0.10
+(blind reference: p2c hit 6.4% p50 0.775, round robin hit 6.5% p50 0.647; p99 6.8-7.6s for everyone)
