@@ -169,14 +169,15 @@ def test_router_records_the_survival_views_expected_tokens():
 
     workers[0].cache.insert(("a", "b"), now=0.0)
 
-    # at t=5 both blocks are 5 s old and never re-referenced: each survives
-    # with probability 1 - 5/10, the path with 0.5 then 0.25, so 0.75 blocks
-    engine.now = 5.0
-    req = Request(id=1, arrival=5.0, prompt_tokens=32, output_tokens=1, blocks=("a", "b"))
+    # at t=15 both blocks are 15 s old, past the 10 s turnover, and never
+    # re-referenced (the perfect view has scrape age 0, so no rescue either):
+    # the view expects neither to have survived
+    engine.now = 15.0
+    req = Request(id=1, arrival=15.0, prompt_tokens=32, output_tokens=1, blocks=("a", "b"))
     router.dispatch(req)
 
     assert req.estimated_cached_tokens == 32
-    assert req.expected_cached_tokens == pytest.approx(0.75 * 16)
+    assert req.expected_cached_tokens == pytest.approx(0.0)
 
     # the dispatch itself was observed by the tracker only after the estimate
-    assert tracker.rate("a", now=5.0) == pytest.approx(1 / 100)
+    assert tracker.rate("a", now=15.0) == pytest.approx(1 / 100)

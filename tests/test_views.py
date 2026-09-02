@@ -237,9 +237,11 @@ def test_ttl_wrapped_shadow_forgets_a_dispatch_after_the_ttl():
     assert view.match(("a", "b")) == 0
 
 
-def test_survival_view_discounts_cold_old_blocks_and_keeps_hot_ones():
+def test_survival_view_trusts_young_blocks_and_rescues_old_hot_ones():
+    import math
+
     from sim.blockrates import BlockRateTracker
-    from sim.views import PerfectView, SurvivalView
+    from sim.views import SnapshotView, SurvivalView
 
     engine = Engine(seed=0)
     worker = build_worker(engine)
@@ -249,18 +251,20 @@ def test_survival_view_discounts_cold_old_blocks_and_keeps_hot_ones():
     for reference_time in range(0, 100, 5):      # "hot" is referenced every 5 s
         tracker.observe(("hot",), now=float(reference_time))
 
-    view = SurvivalView(PerfectView(worker.cache, engine), engine, tracker, turnover=20.0)
+    snapshot = SnapshotView(engine, worker.cache, period=10.0)
+    engine.run(until=0.0)                        # take the scrape at t=0
+    engine.now = 5.0                             # the scrape is now 5 s old
 
-    # at age 0 nothing can have been evicted: the expectation equals the raw match
-    engine.now = 0.0
-    assert view.match_expected(("hot", "cold")) == pytest.approx(2.0)
+    # both blocks have a known age of 5 s. against a 20 s turnover that is
+    # young: trusted outright, expectation equals the raw match
+    young = SurvivalView(snapshot, engine, tracker, turnover=20.0)
+    assert young.match_expected(("hot", "cold")) == pytest.approx(2.0)
 
-    # at age 20 = one full turnover an unreferenced block is gone for sure, so
-    # the path stops after "hot", which the re-reference rescue keeps at
-    # 1 - exp(-0.2 * 20) = 0.982
-    engine.now = 20.0
-    import math
-    assert view.match_expected(("hot", "cold")) == pytest.approx(1.0 - math.exp(-4.0))
+    # against a 4 s turnover both are past their lifetime. "hot" may have been
+    # re-referenced during the 5 s the scrape is old: 1 - exp(-0.2 * 5). "cold"
+    # never is, so the path ends there
+    old = SurvivalView(snapshot, engine, tracker, turnover=4.0)
+    assert old.match_expected(("hot", "cold")) == pytest.approx(1.0 - math.exp(-1.0))
 
     # and the ordinal match is untouched: rankers never see the discount
-    assert view.match(("hot", "cold")) == 2
+    assert old.match(("hot", "cold")) == 2
