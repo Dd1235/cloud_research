@@ -289,9 +289,12 @@ def test_survival_view_with_a_residence_cdf_discounts_blocks_that_usually_die_yo
                          residence_cdf=residence_cdf)
 
     # the step trusts a 6 s old block completely; the curve says half of such
-    # blocks are already gone, and the second block only survives if the first did
+    # blocks are already gone. the two losses are nested, not independent: the
+    # leaf b goes first and a only after it, so a is there whenever b is, and
+    # the expected depth is the sum of the two marginals, 0.5 + 0.5, not the
+    # 0.5 + 0.25 that treating them as independent coin flips would give
     assert step.match_expected(("a", "b")) == pytest.approx(2.0)
-    assert curve.match_expected(("a", "b")) == pytest.approx(0.5 + 0.25)
+    assert curve.match_expected(("a", "b")) == pytest.approx(1.0)
 
 
 def test_residence_cdf_is_applied_as_a_hazard_over_the_scrape_interval():

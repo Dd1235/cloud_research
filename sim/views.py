@@ -246,11 +246,22 @@ class SurvivalView(CacheView):
         return 1.0 - math.exp(-rate * scrape_age) * gone
 
     def match_expected(self, blocks) -> float:
-        path_survival = 1.0
+        """Expected surviving match depth, sum over j of P[block j still present].
+
+        Losses along a matched path are nested, not independent: a radix cache
+        evicts leaves first, so a block is only ever evicted after every block
+        below it, and "block j is present" already implies its ancestors are.
+        The expected depth is therefore the sum of the marginal survivals,
+        clamped so no block is trusted more than the one above it. Multiplying
+        the survivals instead, as if each block could vanish on its own, turns
+        a 3% risk per block into a 27% loss over a 20-block path, which is the
+        10x over-prediction the theory check found.
+        """
         expected_depth = 0.0
+        path_survival = 1.0
 
         for block, known_age in zip(blocks, self._inner.match_with_ages(blocks)):
-            path_survival *= self.survival(block, known_age)
+            path_survival = min(path_survival, self.survival(block, known_age))
             expected_depth += path_survival
 
         return expected_depth
