@@ -185,3 +185,23 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   C=128, P=5                    0.507     0.0673        0.0889              0.2928
   C=512, P=30                   0.435     0.0127        0.0096              0.0597
   C=1024, P=30                  0.200     0.0040        0.0000              0.0137
+
+
+- theory check, corrected model (2/9/26, E11 final): same setup as the theory check above, after two changes to how the survival view turns per-block survival into an expected match. supersedes the prediction columns above. scripts/theory_check.py, scripts/fp_by_age.py, out/theory_check.png/.csv, out/fp_by_age.csv
+    - first, a diagnostic: bin every promised block by how old the view believed it to be (router `record_block_samples`). at 0.25s view age the residence-cdf hazard is only ~2x off per block (blocks believed 5-8s old: measured 1.3% false, hazard 3.1%; 8-12s: 4.3% vs 7.7%; below 5s both are zero), while the view's aggregate prediction was 15x off. so the residence distribution was roughly right and the way per-block survivals were combined was wrong
+    - correction 1, nested losses: the expected surviving match was Σ_j Π_{i≤j} S_i, every block an independent coin flip. in a radix cache a block is only evicted after everything below it, so "block j is present" implies its ancestors are, and the expected depth is Σ_j S_j (running-min clamped). the product turned a 3% per-block risk into a 27% loss over a 20-block path
+    - correction 2, rescue at the chosen worker: a stale entry is rescued only if *this* worker saw the block again, so the rescue rate is the per-(worker, block) dispatch rate, not the fleet rate. with the fleet rate hybrid, which spreads a prefix across workers, was rescued too often and under-predicted 2.6x at 1.5 turnovers of age; per-worker rates bring it to 0.85x
+    - result: predicted fp within 2x of measured at every point where measured fp exceeds 1%, within 1.4x at ages above a quarter turnover, ~2x over at the smallest ages (the leaf-heavy eviction log; absolute error below half a point there) and ~20% under past one turnover. the shape from the first check stands: fp is linear in age / turnover with a capacity-dependent slope, the cold share of promised blocks: longest prefix 0.19 / 0.11 / 0.03 / 0.02 per turnover at 128 / 256 / 512 / 1024 blocks, hybrid 0.26 / 0.21 / 0.13 / 0.05 (churn plus spreading)
+    - what this buys: the router can now say, per decision, how much of a promise to believe, from things it already has (the snapshot's last-access ages, its own dispatch counts, the worker's eviction counter). the survival treatment in E12 was measured with the product form and is being re-run
+
+-  view fp, corrected model      age/T_C   measured   predicted
+  longest prefix, C=128, P=2      0.20      0.040      0.067
+  longest prefix, C=128, P=10     1.02      0.090      0.097
+  longest prefix, C=256, P=5      0.17      0.018      0.031
+  longest prefix, C=256, P=30     1.04      0.053      0.044
+  longest prefix, C=512, P=30     0.44      0.013      0.018
+  hybrid, C=128, P=5              0.65      0.109      0.131
+  hybrid, C=256, P=5              0.25      0.055      0.074
+  hybrid, C=256, P=30             1.49      0.100      0.084
+  hybrid, C=512, P=30             0.55      0.053      0.062
+  hybrid, C=1024, P=30            0.22      0.010      0.022
