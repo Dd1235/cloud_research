@@ -1,6 +1,7 @@
 import pytest
 
 from sim.engine import Engine
+from sim.metrics import summarize
 from sim.policies.longest_prefix import LongestPrefix
 from sim.request import Request
 from sim.router import Router
@@ -93,3 +94,55 @@ def test_stale_view_sends_a_warm_prefix_to_a_cold_worker():
     # tie goes to the idle one, which has to prefill from scratch
     assert fresh_reuse == 32
     assert stale_reuse == 0
+
+
+def test_shadow_view_reports_a_block_the_worker_already_evicted():
+    engine = Engine(seed=0)
+    worker = Worker(
+        engine,
+        wid=0,
+        c_prefill=0.01,
+        c_decode=0.01,
+        cache_blocks=2,
+        block_size=16,
+    )
+    router = Router(
+        engine,
+        LongestPrefix(),
+        [worker],
+        make_view_factory("shadow", engine, shadow_blocks=100),
+    )
+
+    def request_for(request_id: int, arrival: float, blocks):
+        return Request(
+            id=request_id,
+            arrival=arrival,
+            prompt_tokens=32,
+            output_tokens=1,
+            blocks=blocks,
+        )
+
+    # a two-block cache: the second request evicts the first request's blocks
+    # from the worker, but the router's own index still remembers routing them
+    requests = [
+        request_for(1, 0.0, ("a", "b")),
+        request_for(2, 1.0, ("c", "d")),
+        request_for(3, 2.0, ("a", "b")),
+    ]
+    router.replay(requests)
+    engine.run()
+
+    third = requests[2]
+
+    assert worker.cache.evictions == 2
+    assert third.estimated_cached_tokens == 32   # the shadow promised the whole prompt
+    assert third.true_cached_tokens_at_dispatch == 0
+    assert third.cached_tokens == 0              # the worker had evicted it
+
+    metrics = summarize(requests, [worker], warmup_frac=0.0)
+
+    # 32 falsely promised tokens out of 96 prompt tokens, and since nothing
+    # changed between dispatch and admission the execution error is the same
+    assert metrics["view_fp_rate"] == pytest.approx(32 / 96)
+    assert metrics["execution_fp_rate"] == pytest.approx(32 / 96)
+    assert metrics["view_fn_rate"] == 0.0

@@ -83,7 +83,27 @@ class SnapshotView(CacheView):
         return self._snapshot.match(blocks)
 
 
-VIEW_KINDS = ("perfect", "snapshot")
+class ShadowView(CacheView):
+    """View model C: the router's own record of what it routed where.
+
+    Every dispatch is inserted into a router-side prefix cache with its own
+    capacity, so the view is exactly the router's routing history and nothing
+    else: worker evictions are never seen, and a block the worker dropped
+    long ago still looks present. This is llm-d's approximate mode and what
+    Mitzenmacher called record-insert.
+    """
+
+    def __init__(self, capacity_blocks: int):
+        self._index = PrefixCache(capacity_blocks)
+
+    def match(self, blocks) -> int:
+        return self._index.match(blocks)
+
+    def record_dispatch(self, blocks, now: float) -> None:
+        self._index.insert(blocks, now)
+
+
+VIEW_KINDS = ("perfect", "snapshot", "shadow")
 
 
 def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None):
@@ -97,6 +117,10 @@ def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None):
     if kind == "snapshot":
         assert period is not None, "a snapshot view needs a refresh period"
         return lambda worker: SnapshotView(engine, worker.cache, period)
+
+    if kind == "shadow":
+        assert shadow_blocks is not None, "a shadow view needs a capacity"
+        return lambda worker: ShadowView(shadow_blocks)
 
     known_kinds = ", ".join(VIEW_KINDS)
     raise KeyError(f"unknown view {kind!r}; known views: {known_kinds}")
