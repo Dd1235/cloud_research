@@ -1,4 +1,5 @@
 from .dualmap import DualMap
+from .dynamo_cost import DynamoCost
 from .hybrid import Hybrid
 from .least_outstanding import LeastOutstanding
 from .lmetric import Lmetric
@@ -35,6 +36,9 @@ POLICIES = {
     Lmetric.name: lambda rng, options: Lmetric(
         overlap_source=options.get("overlap_source", "raw"),
     ),
+    DynamoCost.name: lambda rng, options: DynamoCost(
+        overlap_source=options.get("overlap_source", "raw"),
+    ),
 }
 
 
@@ -52,6 +56,7 @@ __all__ = [
     "POLICIES",
     "make_policy",
     "DualMap",
+    "DynamoCost",
     "Hybrid",
     "LeastOutstanding",
     "Lmetric",
