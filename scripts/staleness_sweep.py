@@ -29,13 +29,18 @@ from sim.traces import MOONCAKE_BLOCK_SIZE, load_mooncake
 PERFECT = 0.0
 
 # how the router interprets a stale entry: as is, cut at a ttl of k cache
-# turnovers, or weighted by its survival probability. ttl and survival need the
-# cache turnover, which the perfect-view run of the same policy measures first
-TREATMENTS = ("raw", "ttl", "survival")
+# turnovers, weighted by its survival probability, or with the router's own
+# dispatches since the scrape overlaid (the fix for the view's blind spot
+# rather than for its stale promises). ttl and survival need the cache
+# turnover, which the perfect-view run of the same policy measures first
+TREATMENTS = ("raw", "ttl", "survival", "overlay")
 
 
 def treatment_settings(treatment: str, turnover: float, ttl_turnovers: float,
                        residence_cdf=None) -> dict:
+    if treatment == "overlay":
+        return dict(view_overlay=True)
+
     if treatment == "raw" or turnover == float("inf"):
         return {}
 

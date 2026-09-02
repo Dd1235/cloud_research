@@ -90,6 +90,7 @@ def run(
     view_ttl: float | None = None,
     survival_turnover: float | None = None,
     residence_cdf=None,
+    view_overlay: bool = False,
     kv_available_at: str = "admission",
     workload=None,
     block_size: int = 16,
@@ -156,6 +157,7 @@ def run(
             tracker=tracker,
             turnover=survival_turnover,
             residence_cdf=residence_cdf,
+            overlay=view_overlay,
         ),
         tracker=tracker,
     )

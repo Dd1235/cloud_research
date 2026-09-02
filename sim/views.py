@@ -312,7 +312,7 @@ VIEW_KINDS = ("perfect", "snapshot", "shadow")
 
 
 def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None, ttl=None,
-                      tracker=None, turnover=None, residence_cdf=None):
+                      tracker=None, turnover=None, residence_cdf=None, overlay=False):
     """Returns a function worker -> CacheView for the requested view model.
 
     ttl wraps whichever view is built so entries older than it are not trusted;
@@ -326,7 +326,7 @@ def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None, ttl
 
     if kind == "snapshot":
         assert period is not None, "a snapshot view needs a refresh period"
-        base = lambda worker: SnapshotView(engine, worker.cache, period)
+        base = lambda worker: SnapshotView(engine, worker.cache, period, overlay=overlay)
     elif kind == "shadow":
         assert shadow_blocks is not None, "a shadow view needs a capacity"
         base = lambda worker: ShadowView(shadow_blocks, engine)
