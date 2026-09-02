@@ -273,3 +273,28 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   dynamo cost overlay             0.499   0.497   0.499   0.493   0.490   0.474   0.456
   hybrid regret raw / overlay     .087    .085/.082 .085/.083 .088/.087 .112/.094 .124/.099 .132/.128
   hybrid view fp raw / overlay    0       .004/.004 .008/.007 .021/.019 .055/.049 .086/.078 .100/.151
+
+
+- capacity vs routing map on the traces (2/9/26, E16): first 6000 requests of toolagent and conversation at their own timestamps, 8 batched workers with the uncalibrated trace costs (0.05ms/prompt token, 0.25ms/decode step, max batch 64, chunked prefill 512), session depth 16, one seed, blocks per worker 256 / 1024 / 4096 / 16384. two bounds per trace: the reuse ceiling (share of prompt tokens whose blocks appeared in an earlier request, the hit rate of an infinite cache with perfect placement) and a global pool (one worker holding the whole fleet's blocks and batch slots; its latency is meaningless, its hit rate is what placement can never beat). free in-flight sharing (kv at admission), which the prefill-done rerun showed is worth under half a point here. scripts/capacity_map.py, out/capacity_map.png/.csv
+    - the prediction was wrong, and usefully so. i expected the routing gain to peak where the cache lifetime is about one repeat gap and to shrink at both ends. it does not shrink at the top: it grows with capacity and saturates at the ceiling. conversation, longest prefix minus round robin: 0.015 / 0.115 / 0.229 / 0.229 at 256 / 1024 / 4096 / 16384 blocks; toolagent 0.015 / 0.064 / 0.146 / 0.156. a blind router spreads each session's turns over eight workers, so turn j hits only if an earlier turn happened to land on the same worker, and no amount of capacity fixes that: round robin at 16384 blocks, which never evicts, is 0.124 on conversation against a ceiling of 0.353. the ceiling is an ordering fact, and partitioning loses it at any capacity
+    - so "reuse on the traces is capacity-limited, not routing-limited", which the earlier trace entries say, was half right. at 1024 blocks both bind. going to 4096 raises longest prefix 0.408 → 0.514 on toolagent and 0.180 → 0.329 on conversation, and round robin 0.344 → 0.368 and 0.065 → 0.100. capacity pays almost entirely through cache-aware routing; a router is what converts memory into hits. that is the cloud statement: the extra memory is only worth buying with a router that can use it
+    - the perfect-view ranker is within 1-2 points of the global pool at every capacity on both traces (toolagent 0.408 vs 0.433 at 1024, 0.514 vs 0.525 at 4096, 0.527 vs 0.528 at 16384; conversation 0.180 vs 0.183, 0.329 vs 0.330, 0.353 vs 0.353). the fleet's partitioning costs almost nothing once placement is right. hybrid and dualmap pay 1-3 points for balance (queue cv 0.1-0.2 against longest prefix's 0.5), the same trade as on the synthetic workload
+    - what capacity buys, in units that transfer: the share of the ceiling a router reaches against cache lifetime over median repeat gap. conversation (gap 123s, 10% of repeats same-instant): 16% of the ceiling at 0.22 gaps, 51% at 1.1, 93% at 7, all at never-evict. toolagent (gap 81s among the 48% of repeats that are not same-instant): 63% at 0.34, 77% at 1.7, 97% at 14. a cache lifetime of one median gap gets half to three quarters of the reachable reuse; several gaps get nearly all of it
+    - turnover grows faster than linearly with capacity under cache-aware routing (toolagent longest prefix 27 → 136 → 1168s for 4x steps) because a warm cache evicts less: the same prefix stops being re-inserted on a cold worker. blind routing's turnover grows slower (27 → 122 → 825s), it keeps re-fetching
+    - absolute hit rates here are relative until the mac calibration; the shape and the ordering are the result
+
+-  hit rate by blocks per worker        256     1024    4096    16384
+  toolagent  reuse ceiling 0.528
+    global pool                       0.334   0.433   0.525   0.528
+    longest prefix                    0.331   0.408   0.514   0.527
+    hybrid                            0.334   0.418   0.507   0.510
+    dualmap                           0.325   0.412   0.502   0.507
+    round robin                       0.316   0.344   0.368   0.371
+    cache lifetime / median gap       0.34    1.7     14      never evicts
+  conversation  reuse ceiling 0.353
+    global pool                       0.056   0.183   0.330   0.353
+    longest prefix                    0.056   0.180   0.329   0.353
+    hybrid                            0.052   0.167   0.302   0.319
+    dualmap                           0.055   0.165   0.297   0.321
+    round robin                       0.041   0.065   0.100   0.124
+    cache lifetime / median gap       0.22    1.1     7       never evicts
