@@ -197,3 +197,41 @@ def test_same_instant_arrivals_are_routed_before_the_iteration_they_trigger():
     assert with_shadow.estimated_cached_tokens == 32   # the shadow saw the first dispatch
     assert with_shadow.true_cached_tokens_at_dispatch == 0
     assert with_shadow.cached_tokens == 32
+
+
+def test_ttl_view_stops_trusting_a_block_once_its_last_access_is_older_than_the_ttl():
+    from sim.views import PerfectView, TtlView
+
+    engine = Engine(seed=0)
+    worker = build_worker(engine)
+    worker.cache.insert(("a", "b", "c"), now=0.0)
+    worker.cache.insert(("a",), now=8.0)        # "a" refreshed, "b" and "c" not
+
+    view = TtlView(PerfectView(worker.cache, engine), ttl=10.0)
+
+    engine.now = 5.0
+    assert view.match(("a", "b", "c")) == 3     # all three touched within 10 s
+
+    engine.now = 12.0
+    # "a" is 4 s old and trusted; "b" is 12 s old and cut, and so is "c"
+    # behind it even though its own age would not matter for a contiguous prefix
+    assert view.match(("a", "b", "c")) == 1
+    assert view.match_with_ages(("a", "b", "c")) == [4.0]
+
+    # the truth still holds all three: the ttl view is deliberately pessimistic
+    assert worker.cache.match(("a", "b", "c")) == 3
+
+
+def test_ttl_wrapped_shadow_forgets_a_dispatch_after_the_ttl():
+    from sim.views import ShadowView, TtlView
+
+    engine = Engine(seed=0)
+    view = TtlView(ShadowView(100, engine), ttl=10.0)
+
+    view.record_dispatch(("a", "b"), now=0.0)
+
+    engine.now = 5.0
+    assert view.match(("a", "b")) == 2
+
+    engine.now = 15.0
+    assert view.match(("a", "b")) == 0

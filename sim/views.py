@@ -12,6 +12,12 @@ class CacheView:
     def match(self, blocks) -> int:
         raise NotImplementedError
 
+    # the same leading blocks as match(), each with its last-access age as the
+    # view knows it. this is what lets a view distrust a block that has sat
+    # untouched for a whole cache lifetime
+    def match_with_ages(self, blocks) -> list[float]:
+        raise NotImplementedError
+
     def record_dispatch(self, blocks, now: float) -> None:
         pass
 
@@ -30,11 +36,15 @@ class PerfectView(CacheView):
     point of the staleness sweep and the upper bound nothing real can reach.
     """
 
-    def __init__(self, cache: PrefixCache):
+    def __init__(self, cache: PrefixCache, engine=None):
         self._cache = cache
+        self._engine = engine
 
     def match(self, blocks) -> int:
         return self._cache.match(blocks)
+
+    def match_with_ages(self, blocks) -> list[float]:
+        return self._cache.match_with_ages(blocks, self._engine.now)
 
 
 class SnapshotView(CacheView):
@@ -82,6 +92,14 @@ class SnapshotView(CacheView):
 
         return self._snapshot.match(blocks)
 
+    def match_with_ages(self, blocks) -> list[float]:
+        if self._snapshot is None:
+            return []
+
+        # ages are measured against now, so a block's age includes the time
+        # since the scrape; a re-reference since then is invisible to the view
+        return self._snapshot.match_with_ages(blocks, self._engine.now)
+
 
 class ShadowView(CacheView):
     """View model C: the router's own record of what it routed where.
@@ -93,34 +111,88 @@ class ShadowView(CacheView):
     Mitzenmacher called record-insert.
     """
 
-    def __init__(self, capacity_blocks: int):
+    def __init__(self, capacity_blocks: int, engine=None):
         self._index = PrefixCache(capacity_blocks)
+        self._engine = engine
 
     def match(self, blocks) -> int:
         return self._index.match(blocks)
+
+    def match_with_ages(self, blocks) -> list[float]:
+        return self._index.match_with_ages(blocks, self._engine.now)
 
     def record_dispatch(self, blocks, now: float) -> None:
         self._index.insert(blocks, now)
 
 
+class TtlView(CacheView):
+    """Trust a block only while its last-access age is below a time to live.
+
+    Che's approximation says an LRU cache of C blocks behaves like a cache in
+    which every block lives a characteristic time T_C after its last access.
+    So a view entry older than T_C is, in expectation, describing a block that
+    has already been evicted. Cutting the match at the first block older than
+    the ttl turns any view (snapshot, shadow, event fed) into one whose false
+    positives are bounded by the same rule, with no extra telemetry: the ages
+    are already in the view. Dynamo's fixed 120 s expiry is this with a guess
+    where the measured turnover should be.
+    """
+
+    def __init__(self, inner: CacheView, ttl: float):
+        assert ttl > 0
+
+        self._inner = inner
+        self.ttl = ttl
+
+    def _trusted_ages(self, blocks) -> list[float]:
+        trusted = []
+
+        for age in self._inner.match_with_ages(blocks):
+            if age >= self.ttl:
+                break   # a prefix match must be contiguous from the first block
+
+            trusted.append(age)
+
+        return trusted
+
+    def match(self, blocks) -> int:
+        return len(self._trusted_ages(blocks))
+
+    def match_with_ages(self, blocks) -> list[float]:
+        return self._trusted_ages(blocks)
+
+    def record_dispatch(self, blocks, now: float) -> None:
+        self._inner.record_dispatch(blocks, now)
+
+    @property
+    def age(self) -> float:
+        return self._inner.age
+
+
 VIEW_KINDS = ("perfect", "snapshot", "shadow")
 
 
-def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None):
+def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None, ttl=None):
     """Returns a function worker -> CacheView for the requested view model.
 
-    None means the perfect view; the router then wraps each worker's own cache.
+    ttl, when given, wraps whichever view is built so entries older than it are
+    not trusted. The perfect view is never wrapped: it has no stale entries to
+    distrust, and wrapping it would only throw away true positives.
     """
     if kind == "perfect":
         return None
 
     if kind == "snapshot":
         assert period is not None, "a snapshot view needs a refresh period"
-        return lambda worker: SnapshotView(engine, worker.cache, period)
-
-    if kind == "shadow":
+        base = lambda worker: SnapshotView(engine, worker.cache, period)
+    elif kind == "shadow":
         assert shadow_blocks is not None, "a shadow view needs a capacity"
-        return lambda worker: ShadowView(shadow_blocks)
+        base = lambda worker: ShadowView(shadow_blocks, engine)
+    else:
+        known_kinds = ", ".join(VIEW_KINDS)
+        raise KeyError(f"unknown view {kind!r}; known views: {known_kinds}")
 
-    known_kinds = ", ".join(VIEW_KINDS)
-    raise KeyError(f"unknown view {kind!r}; known views: {known_kinds}")
+    if ttl is None:
+        return base
+
+    return lambda worker: TtlView(base(worker), ttl)

@@ -22,7 +22,7 @@ class Router:
             worker.view = (
                 view_factory(worker)
                 if view_factory is not None
-                else PerfectView(worker.cache)
+                else PerfectView(worker.cache, engine)
             )
 
     def dispatch(self, req) -> None:
