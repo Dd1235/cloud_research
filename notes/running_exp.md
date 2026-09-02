@@ -318,3 +318,19 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   dynamo cost overlay             0.499   0.497   0.499   0.493   0.490   0.474   0.456
   dynamo cost overlay + survival  0.499   0.489   0.486   0.489   0.486   0.494   0.488
   hybrid regret, overlay + surv.  .087    .093    .090    .092    .097    .098    .098
+
+
+- the overlay on the toolagent trace (2/9/26, E13 on a trace): the toolagent sweep setup (8 uncalibrated batched workers, 1024 blocks, session depth 16, kv at admission) with `--treatment overlay`. out/treatment_overlay_toolagent_sweep.png/.csv
+    - for pure longest prefix the overlay *is* the shadow cascade, at every period including 0.5s: hit rate 0.329 (blind 0.344, raw snapshot 0.408-0.431), p99 1546s, queue cv 2.64, identical to the longest prefix + shadow row of the original sweep. a burst's followers arrive in the same instant as the leader, the overlay shows them the leader's dispatch, and because every request on this trace shares the tool prompt, every request is a follower. a 0.5s overlay window is already the whole burst
+    - hybrid with the overlay is fine and slightly better than raw at 15s (0.423 vs 0.416, p99 6.28s vs 6.45s, queue cv 0.15); dualmap is unchanged (0.414, p99 6.0s). the load term and the hash cap stop the cascade, exactly as they stopped the shadow's
+    - the raw snapshot's gift to longest prefix (hit 0.408 → 0.431 and p99 6.56 → 5.98s with age, the herding relief) is gone with the overlay, since the overlay removes the blind spot that was spreading the bursts
+    - so the second clause of the ordinal / cardinal rule: a ranker gains nothing from any record-insert on bursty shared-prefix traffic and can lose everything; the overlay is for scorers with a load term, which are the ones that needed it. the complete scrape repair (overlay + survival) is a cardinal-scorer treatment, and pure rankers on real traffic want a plain scrape, or a hash cap
+
+-  toolagent, overlay              P=0     0.5      1       2       5      10      30
+  longest prefix hit rate       0.408   0.329   0.329   0.329   0.329   0.329   0.329
+  longest prefix ttft p99 (s)   6.56    1546    1546    1546    1546    1546    1546
+  longest prefix queue cv       0.52    2.64    2.64    2.64    2.64    2.64    2.64
+  hybrid hit rate               0.418   0.419   0.419   0.419   0.421   0.419   0.423
+  hybrid ttft p99 (s)           6.22    6.51    6.51    6.51    6.62    6.30    6.28
+  dualmap hit rate              0.412   0.414   0.414   0.414   0.414   0.414   0.413
+  dualmap ttft p99 (s)          6.05    5.98    5.98    5.98    6.05    6.05    6.05
