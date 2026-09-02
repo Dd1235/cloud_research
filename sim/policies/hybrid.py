@@ -7,7 +7,7 @@ class Hybrid:
 
     def score(self, req, worker, max_outstanding: int) -> float:
         overlap = (
-            worker.cache.match(req.blocks) / len(req.blocks)
+            worker.view.match(req.blocks) / len(req.blocks)
             if req.blocks
             else 0.0
         )

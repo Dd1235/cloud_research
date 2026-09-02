@@ -78,6 +78,11 @@ class BatchedWorker:
         self.prefill_budget = prefill_budget
         self.cache = PrefixCache(cache_blocks)
 
+        # what routing policies read. the worker's own cache by default, i.e. a
+        # perfect and instantaneous view; the router swaps in a stale or
+        # approximate one. admission below always consults self.cache
+        self.view = self.cache
+
         self.queue = deque()
         self.running: list[_Sequence] = []
 

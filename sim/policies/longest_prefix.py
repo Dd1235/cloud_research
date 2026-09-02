@@ -5,7 +5,7 @@ class LongestPrefix:
         return max(
             workers,
             key=lambda worker: (
-                worker.cache.match(req.blocks),
+                worker.view.match(req.blocks),
                 -worker.outstanding,
             ),
         )

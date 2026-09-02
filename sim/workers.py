@@ -20,6 +20,11 @@ class Worker:
         self.block_size = block_size
         self.cache = PrefixCache(cache_blocks)
 
+        # what routing policies read. the worker's own cache by default, i.e. a
+        # perfect and instantaneous view; the router swaps in a stale or
+        # approximate one. the worker itself always consults self.cache
+        self.view = self.cache
+
         self.tokens_processed = 0
         self.tokens_reused = 0
 
