@@ -205,3 +205,19 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   hybrid, C=256, P=30             1.49      0.100      0.084
   hybrid, C=512, P=30             0.55      0.053      0.062
   hybrid, C=1024, P=30            0.22      0.010      0.022
+
+
+- toolagent trace under realistic kv timing (2/9/26): the toolagent sweep above re-run with `--kv-available-at prefill_done`, so a request's blocks count as cached only after the iteration that prefilled them, and a same-iteration follower recomputes the shared prefix instead of sharing it for free. everything else identical. out/staleness_toolagent_prefill_done_sweep.png/.csv
+    - both burst findings stand. herding relief: longest prefix hit rate 0.407 → 0.430 from a fresh to a 10s view, queue cv 0.53 → 0.12, p99 6.9 → 5.8s (free sharing: 0.408 → 0.431, 0.52 → 0.12, 6.6 → 6.2s). shadow cascade: longest prefix + shadow p99 1517s, queue cv 2.64, hit rate 0.337 below blind (free sharing: 1546s, 2.64, 0.329); hybrid + shadow 6.3s and dualmap + shadow 6.0s are fine either way
+    - hit rates move by less than half a point at every period for every policy, so free in-flight sharing was not inflating the trace numbers: at 6 req/s over 8 workers, same-iteration followers of the same prefix are rare enough not to register in the total, and the herding effect is about *where* a burst lands, not about whether its first two members share a prefill
+    - the caveat on findings 4 and 7 is closed; both settings are reported and agree
+
+-  toolagent, prefill_done         P=0     0.5      1       2       5      10      30   shadow
+  longest prefix hit rate       0.407   0.408   0.411   0.412   0.427   0.430   0.426   0.337
+  longest prefix queue cv       0.525   0.523   0.525   0.520   0.242   0.116   0.090   2.644
+  longest prefix ttft p99 (s)   6.91    6.85    6.52    6.66    6.26    5.80    6.33   1517
+  hybrid hit rate               0.419   0.419   0.422   0.423   0.421   0.421   0.420   0.417
+  hybrid ttft p99 (s)           6.34    6.34    6.46    6.50    6.25    6.22    6.41    6.31
+  dualmap hit rate              0.414   0.413   0.413   0.413   0.414   0.413   0.411   0.414
+  dualmap ttft p99 (s)          6.09    6.11    6.11    6.11    6.05    6.09    6.09    5.96
+  p2c / round robin hit rate    0.336 / 0.344, p99 6.76 / 7.06
