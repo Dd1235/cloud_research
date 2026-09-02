@@ -348,3 +348,19 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   hybrid view fp, predicted     0       .0011   .0011   .0010   .0027   .0044   .0099
   dualmap hit rate              0.412   0.414   0.414   0.414   0.414   0.414   0.413
   longest prefix hit rate       0.408   0.329   0.329   0.329   0.329   0.329   0.329
+
+
+- overlay plus survival on the conversation trace, and what the cascade really is (2/9/26): the conversation sweep setup with `--treatment overlay_survival --survival-lifetime cdf --overlap-source expected`, default policies. residence p10 / p50 / p90 = 81-84 / 108 / 141s against turnovers of 128-131s. out/treatment_overlay_survival_conversation_sweep.png/.csv
+    - hybrid and dualmap: flat, as on toolagent (hybrid 0.165-0.170 across periods against 0.160-0.167 raw; dualmap 0.165). staleness never cost anything here either, and the treatment is harmless. the model's predicted false positives track the measured ones again (hybrid 0.0049 predicted vs 0.0022 measured at 5s, 0.0144 vs 0.0119 at 15s)
+    - longest prefix with the overlay locks onto one worker exactly as it did with the shadow: hit rate 0.044 (blind 0.065), p50 2017s, queue cv 2.65, at every period. this trace has no bursts to speak of (repeats 114s apart), so "the overlay shows every follower where the leader went" was the wrong explanation, and a probe of the first twelve decisions gives the right one
+    - the trace's timestamps are coarse: the first ten requests all carry t=0. with the perfect view none of them has been admitted when the others are routed, so they all see empty caches, tie, spread by outstanding, and every worker learns the universal system-prompt block in the first instant; from then on every worker matches it equally and the ranker keeps spreading by load. with any record-insert view (shadow or overlay) the second request already sees the universal block on worker 0, one block out of twenty-five, and pure ranking takes that as decisive. worker 0 gets it, and the third, and the six-thousandth: no other worker ever receives a request, so no other worker ever learns the prefix, and the tie that would have spread the load never occurs again. a symmetry broken at t=0 that never heals
+    - so the failure is not herding under bursts, it is a ranker with no notion of "this match is too small to matter" fed a view that records its own decisions. anything that gives the other workers a chance fixes it: a match threshold below which the ranker routes by load (sglang's cache-aware policy has one, at half the prompt; our longest prefix is purer than production's), a load term (hybrid), a hash cap (dualmap), or a key that skips the universal prefix. the toolagent cascade is the same lock-in; the bursts there only make it faster
+    - correction to the two earlier entries that called this "herding on bursts": the mechanism is the first-instant lock-in above. the numbers stand
+
+-  conversation, overlay + survival  P=0     0.5      1       2       5      10      30
+  hybrid hit rate                 0.167   0.170   0.170   0.170   0.167   0.165   0.165
+  hybrid ttft p99 (s)             6.99    7.16    7.16    7.16    7.16    7.29    7.16
+  hybrid view fp, meas. / pred.   0       0/.0012 0/.0012 0/.0012 .0008/.0031 .0022/.0049 .0119/.0144
+  dualmap hit rate                0.165   0.165   0.165   0.165   0.166   0.165   0.166
+  longest prefix hit rate         0.180   0.044   0.044   0.044   0.044   0.044   0.044
+  longest prefix ttft p50 (s)     0.60    2017    2017    2017    2017    2017    2017
