@@ -8,6 +8,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from compare_policies import (
+    C_DECODE_BATCHED,
     C_PREFILL,
     median_across_seeds,
     resolve_policy_names,
@@ -305,6 +306,8 @@ def main():
     parser.add_argument("--trace", default=None, help="replay a mooncake jsonl trace instead of the synthetic workload; zipf, rate and the scaling figure are then not applicable")
     parser.add_argument("--speedup", type=float, default=1.0, help="trace only: compress arrival gaps by this factor (default: 1.0)")
     parser.add_argument("--c-prefill", type=float, default=C_PREFILL, help=f"seconds per uncached prompt token (default: {C_PREFILL})")
+    parser.add_argument("--c-decode", type=float, default=C_DECODE_BATCHED, help=f"batched worker: seconds per decoding sequence per iteration (default: {C_DECODE_BATCHED})")
+    parser.add_argument("--max-batch", type=int, default=16, help="batched worker: sequences resident at once (default: 16)")
     args = parser.parse_args()
 
     policy_names = resolve_policy_names(args.policies)
@@ -321,6 +324,8 @@ def main():
         worker_kind=args.worker,
         prefill_budget=args.prefill_budget or None,
         c_prefill=args.c_prefill,
+        c_decode_batched=args.c_decode,
+        max_batch=args.max_batch,
     )
 
     rate = args.rate
