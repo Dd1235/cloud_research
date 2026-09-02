@@ -334,3 +334,17 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   hybrid ttft p99 (s)           6.22    6.51    6.51    6.51    6.62    6.30    6.28
   dualmap hit rate              0.412   0.414   0.414   0.414   0.414   0.414   0.413
   dualmap ttft p99 (s)          6.05    5.98    5.98    5.98    6.05    6.05    6.05
+
+
+- overlay plus survival on the toolagent trace (2/9/26): the toolagent sweep setup with `--treatment overlay_survival --survival-lifetime cdf --overlap-source expected`, default policies (longest prefix, hybrid, dualmap; lmetric and dynamo cost were not run on the traces). the residence distribution measured on each policy's perfect run: idle before eviction p10 / p50 / p90 = 66 / 84 / 120s for longest prefix and 78-81 / 108 / 138-144s for hybrid and dualmap, against turnovers of 136-139s, the same leaves-first spread as on the synthetic cache at ten times the scale. out/treatment_overlay_survival_toolagent_sweep.png/.csv
+    - a null for routing, as it had to be: staleness never cost anything on this trace (view fp ≤ 1.7% at 0.13 turnovers of age), so there is nothing for the complete treatment to recover. hybrid 0.417-0.423 across periods against 0.416-0.423 raw, p99 6.5s against 6.2-6.5s; dualmap flat; longest prefix cascades as with the overlay alone (a ranker: the discount rescales what it does not care about)
+    - the positive result is the model on a real trace: the view's predicted false positives track the measured ones within about 25% (hybrid 0.0044 predicted vs 0.0056 measured at 5s mean age, 0.0099 vs 0.0094 at 15s; dualmap 0.0038 vs 0.0032, 0.0139 vs 0.0155), with the residence cdf and per-worker rates measured from the trace itself. the theory check's calibration carries from the synthetic zipf cache to mooncake's hash blocks without adjustment
+    - so on the traces the staleness question closes the same way it did on the synthetic workload, one level up: at trace-scale turnovers a scrape is fresh for practical purposes, the complete repair is harmless where it is not needed, and the number the model produces is right where it can be checked
+
+-  toolagent, overlay + survival   P=0     0.5      1       2       5      10      30
+  hybrid hit rate               0.418   0.423   0.423   0.423   0.419   0.421   0.417
+  hybrid ttft p99 (s)           6.22    6.52    6.52    6.52    6.49    6.52    6.49
+  hybrid view fp, measured      0       .0004   .0004   .0004   .0016   .0056   .0094
+  hybrid view fp, predicted     0       .0011   .0011   .0010   .0027   .0044   .0099
+  dualmap hit rate              0.412   0.414   0.414   0.414   0.414   0.414   0.413
+  longest prefix hit rate       0.408   0.329   0.329   0.329   0.329   0.329   0.329
