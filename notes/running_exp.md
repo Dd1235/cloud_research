@@ -298,3 +298,23 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
     dualmap                           0.055   0.165   0.297   0.321
     round robin                       0.041   0.065   0.100   0.124
     cache lifetime / median gap       0.22    1.1     7       never evicts
+
+
+- overlay plus survival: the complete repair of a scrape (2/9/26, E13 final): same sweep, `--treatment overlay_survival --survival-lifetime cdf --overlap-source expected`. the overlay closes the blind spot, the survival weight (nested losses, per-worker rescue, residence-cdf lifetime) discounts the promises that went stale since. out/treatment_overlay_survival_sweep.png/.csv
+    - every cardinal scorer is flat across view age up to 15s, 1-1.5 turnovers, within about a point of its fresh view. hybrid 0.589-0.594 at every period (fresh 0.597; raw 0.539 at 15s; overlay alone 0.550); lmetric 0.652-0.673 (fresh 0.673; raw 0.599; overlay alone 0.639); dynamo cost 0.486-0.494 (fresh 0.499; raw 0.447; overlay alone 0.456). regret sits at the fresh view's level at every age: hybrid 0.090-0.098 against 0.087, lmetric 0.030-0.045 against 0.026, dynamo 0.177-0.181 against 0.164
+    - the two halves do what the accounting said they would. false negatives are zero at every age (the overlay); hybrid's false positives at 15s are 0.084 with the discount against 0.151 with the overlay alone (the discount). the model's own prediction tracks the measured false positives within 1.5x throughout (hybrid 0.047 vs 0.030 at 2.5s, 0.061 vs 0.084 at 15s)
+    - the rankers are untouched (longest prefix 0.724-0.726, dualmap 0.720-0.725), as at every step: they were never sick
+    - what the router needs for this: the snapshot's last-access ages (already in any scrape), its own dispatch log (already in its memory), per-(worker, block) dispatch counts over a window (a dict), and one residence-time distribution per worker measured once from the eviction log, or che's step if the log is not available (the step version is never worse than raw and recovers part of dynamo's loss; the cdf version is the one that goes flat). nothing new from the engine
+    - so the answer to the project's question, on the synthetic workload: a router's view of the caches can be a full cache turnover old and the routing is as good as fresh, provided the router remembers what it did since the scrape and discounts what the cache has probably dropped since. the two fixes are complements and each alone is partial. next: the same treatment on the traces, and a shadow index with the same survival weight (the record-insert counterpart)
+
+-  hit rate, overlay + survival    P=0     0.5      1       2       5      10      30
+  hybrid raw                      0.597   0.596   0.595   0.593   0.566   0.549   0.539
+  hybrid overlay                  0.597   0.602   0.601   0.595   0.589   0.584   0.550
+  hybrid overlay + survival       0.597   0.592   0.594   0.593   0.591   0.589   0.591
+  lmetric raw                     0.673   0.678   0.671   0.666   0.641   0.623   0.599
+  lmetric overlay                 0.673   0.677   0.678   0.676   0.673   0.662   0.639
+  lmetric overlay + survival      0.673   0.671   0.673   0.668   0.656   0.655   0.652
+  dynamo cost raw                 0.499   0.497   0.487   0.490   0.469   0.450   0.447
+  dynamo cost overlay             0.499   0.497   0.499   0.493   0.490   0.474   0.456
+  dynamo cost overlay + survival  0.499   0.489   0.486   0.489   0.486   0.494   0.488
+  hybrid regret, overlay + surv.  .087    .093    .090    .092    .097    .098    .098
