@@ -42,5 +42,5 @@ def test_sampler_can_skip_the_warm_up():
     engine.run(until=3.0)
 
     # ticks at 0, 1, 2, 3 saw 0, 0, 1, 0
-    assert sampler.mean_outstanding() == pytest.approx(0.25)
+    assert sampler.mean_outstanding() == pytest.approx([0.25])
     assert sampler.mean_outstanding(since=2.0) == pytest.approx([0.5])
