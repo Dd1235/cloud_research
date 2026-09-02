@@ -38,6 +38,26 @@ class PrefixCache:
 
         return matched 
 
+    def match_with_ages(self, blocks, now: float) -> list[float]:
+        """Age of each leading block that is present: now minus its last access.
+
+        The same walk as match(), returning one number per matched block instead
+        of a count. A view that only wants to trust recently touched blocks needs
+        this: a count cannot tell a block touched a moment ago from one that has
+        sat untouched for a whole cache lifetime and is about to be evicted.
+        """
+        node = self.root
+        ages = []
+
+        for block in blocks:
+            node = node.children.get(block)
+            if node is None:
+                break
+
+            ages.append(now - node.last_access)
+
+        return ages
+
     def insert(self, blocks, now: float) -> int:
         node = self.root
         node.last_access = now

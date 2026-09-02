@@ -109,3 +109,15 @@ def test_copy_preserves_recency_so_it_evicts_the_same_victim():
     assert cache.match(("a", "b", "c")) == 2
     assert snapshot.match(("a", "b", "c")) == 2
     assert snapshot.match(("a", "b", "d")) == 3
+
+def test_match_with_ages_reports_how_long_each_matched_block_sat_untouched():
+    cache = PrefixCache(10)
+    cache.insert(("a", "b"), now=1.0)
+    cache.insert(("a", "c"), now=3.0)   # refreshes "a", not "b"
+
+    # "a" was last touched at 3.0, "b" at 1.0
+    assert cache.match_with_ages(("a", "b"), now=5.0) == [2.0, 4.0]
+    # the walk stops at the first missing block, like match()
+    assert cache.match_with_ages(("a", "c", "d"), now=5.0) == [2.0, 2.0]
+    assert cache.match_with_ages(("z",), now=5.0) == []
+    assert len(cache.match_with_ages(("a", "b"), now=5.0)) == cache.match(("a", "b"))
