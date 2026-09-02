@@ -76,3 +76,25 @@ routing regret                 0.000   0.000   0.001   0.001   0.006   0.006   0
 - shadow view, zipf 0.9        longest prefix    hybrid    dualmap
 prefix hit rate                     72.5%         60.7%     72.4%
 view fp rate                        0.000         0.001     0.000
+
+
+- shadow index capacity ablation (2/9/26): view model C, the router keeps its own lru prefix index per worker with capacity Ĉ and inserts what it routed; it never sees the worker evict. 4 batched workers, 6 req/s, 3000 req, worker cache 256 blocks, zipf 0.9, 3 seeds (medians). Ĉ swept from 32 to 1024 blocks; Ĉ = 256 is the matched case from the sweep above. scripts/compare_policies.py --view shadow --shadow-blocks Ĉ
+    - two different failure modes, one per direction. too small: the router forgets blocks the worker still holds (false negatives), so it stops seeing warm workers and drifts toward blind routing. too big: the router remembers blocks the worker has evicted (false positives, capped at ~3.5% of prompt tokens by the eviction rate)
+    - forgetting hurts everyone except dualmap: longest prefix hit rate 72.5% → 64.4% → 55.1% → 46.5% at Ĉ = 128, 64, 32 (blind is 41%). dualmap still 64.1% at Ĉ = 32, one eighth of the real cache, because the hash rings supply the affinity and the view only has to rank two candidates
+    - remembering too much is harmless for policies that *rank* by overlap: longest prefix and dualmap keep 72% hit rate at Ĉ = 1024 despite 3.4% false positives, because a stale positive on the worker that *was* warm still ranks it first. it is catastrophic for hybrid, which *adds* overlap to a load term: its inflated overlap on a cold worker outvotes load, hit rate 60.7% → 46.7%, false positives 29%, regret 0.205
+    - design rule that falls out: use the cache view ordinally (to rank) and it survives staleness in both directions; use it cardinally (in a weighted score) and false positives break it. any age or confidence discount (plan N2) matters for the cardinal scorers, not the rankers
+    - side effect of over-remembering for longest prefix: queue cv 0.46 → 0.71 and p99 0.96 → 1.25. believing more workers are warm makes it herd harder
+
+- shadow capacity Ĉ (cache 256)     32      64     128     256     512    1024
+longest prefix hit rate          46.5%   55.1%   64.4%   72.5%   72.3%   72.5%
+longest prefix regret            0.226   0.154   0.070   0.000   0.000   0.000
+longest prefix view fp           0.014   0.008   0.001   0.000   0.033   0.034
+longest prefix TTFT p99          2.071   1.868   1.302   0.958   1.033   1.249
+hybrid hit rate                  44.2%   48.1%   54.0%   60.7%   54.3%   46.7%
+hybrid regret                    0.241   0.207   0.151   0.083   0.137   0.205
+hybrid view fp                   0.016   0.010   0.003   0.001   0.174   0.292
+hybrid TTFT p99                  2.041   1.981   1.629   1.298   1.585   1.926
+dualmap hit rate                 64.1%   66.1%   68.9%   72.4%   72.0%   72.2%
+dualmap regret                   0.062   0.054   0.029   0.000   0.000   0.000
+dualmap view fp                  0.001   0.002   0.001   0.000   0.037   0.037
+dualmap TTFT p99                 1.407   1.468   1.307   1.278   1.149   1.195
