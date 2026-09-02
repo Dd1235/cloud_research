@@ -19,6 +19,12 @@ class Request:
     # because only there can a token be delayed by work done for other requests
     token_times: list = field(default_factory=list)
 
+    # filled by the router at dispatch, in tokens like cached_tokens. None when
+    # a request reached a worker without going through a router
+    estimated_cached_tokens: int | None = None        # what the view promised on the chosen worker
+    true_cached_tokens_at_dispatch: int | None = None # what that worker really held at that instant
+    best_cached_tokens_at_dispatch: int | None = None # the most any worker really held at that instant
+
     @property
     def done(self) -> bool:
         return self.finish is not None
