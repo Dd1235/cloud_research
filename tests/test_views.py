@@ -134,7 +134,8 @@ def test_shadow_view_reports_a_block_the_worker_already_evicted():
 
     third = requests[2]
 
-    assert worker.cache.evictions == 2
+    # (a,b) evicted by (c,d), then (c,d) evicted again when (a,b) comes back
+    assert worker.cache.evictions == 4
     assert third.estimated_cached_tokens == 32   # the shadow promised the whole prompt
     assert third.true_cached_tokens_at_dispatch == 0
     assert third.cached_tokens == 0              # the worker had evicted it
