@@ -142,3 +142,30 @@ dualmap hit rate (depth 16)    16.5%   16.5%   16.5%   16.5%   16.6%   16.4%   1
 dualmap TTFT p50 (s)           0.665   0.665   0.665   0.665   0.668   0.666   0.658   0.667
 dualmap queue cv                0.10    0.10    0.10    0.10    0.10    0.10    0.10    0.10
 (blind reference: p2c hit 6.4% p50 0.775, round robin hit 6.5% p50 0.647; p99 6.8-7.6s for everyone)
+
+
+- treatments for a stale view (2/9/26, E12): three cardinal scorers (hybrid, lmetric = new prefill tokens x batch size, dynamo cost = prefill blocks + active blocks) and two rankers (longest prefix, dualmap), same setup as the staleness sweep (4 batched workers, 6 req/s, zipf 0.9, 256 blocks, 3 seeds). the view is read three ways: raw; ttl = ignore a block whose last access is older than the policy's own measured cache turnover; survival = weight each block by its chance of still being there (che step at the turnover, plus a rescue for re-references the scrape could not see). out/treatment_{raw,ttl,survival}_sweep.png/.csv. shadow index at 4x the worker's capacity with a ttl sweep in the second table
+    - cache turnover by policy (perfect view): longest prefix 14.7s, dualmap 14.9s, lmetric 12.7s, hybrid 10.3s, dynamo cost 8.2s. the more a policy balances load, the more it spreads prefixes, the faster its caches churn. staleness sensitivity follows the same order
+    - lmetric is a strong tuning-free baseline: perfect-view hit rate 0.673 and p99 1.13s beat hybrid (0.597, 1.19s). it degrades with staleness like the others (0.599 at 15s age)
+    - on the over-sized shadow index (Ĉ = 4C, false positives 21-30% of prompt tokens) a ttl at the policy's own turnover recovers 80-90% of the lost hit rate: hybrid 0.467 → 0.591 (matched capacity 0.607), lmetric 0.553 → 0.660 (0.673), dynamo cost 0.432 → 0.486 (0.499). the best ttl sits at each policy's turnover (8-10s), and a ttl twice too long (15-20s) gives back half the gain. survival = ttl here, because a record-insert index refreshes its own timestamps and has no scrape age to rescue
+    - on periodic snapshots neither treatment helps the cardinal scorers: at 15s mean age hybrid is 0.539 raw, 0.447 ttl, 0.510 survival; lmetric 0.599 / 0.458 / 0.563. the snapshot's false positives are only 5-10% there, so its *ranking* of workers is still right, and any discount shifts the scorer toward its load term and away from locality. ttl is the worst because it also cannot see re-references since the scrape (false negatives, regret 0.077 → 0.203 for lmetric)
+    - the rankers are unaffected by every treatment, as they should be: longest prefix and dualmap read the view ordinally and the treatments only rescale it
+    - so the treatment must depend on how wrong the view is: a discount pays when false positives dominate (a record-insert index that outgrew the cache) and costs when the ranking is intact (a scrape a turnover old). a router can measure its own false-positive rate from execution feedback (the engine reports cached tokens per request) and switch treatments on that. that is the next mechanism to build
+    - the survival model's own prediction of the false-positive rate under-shoots on snapshots (hybrid 15s: predicted 0.050, measured 0.100), because a radix cache evicts leaves well before the turnover; see the theory check entry
+
+-  shadow at 4C, hit rate    raw   ttl=5   ttl=8  ttl=10  ttl=12  ttl=15  ttl=20  ttl=30   matched Ĉ=C
+hybrid  (T_C 10.3s)        0.467   0.574   0.591   0.579   0.566   0.550   0.528   0.499   0.607
+lmetric (T_C 12.7s)        0.553   0.635   0.659   0.660   0.657   0.642   0.614   0.587   0.673
+dynamo  (T_C  8.2s)        0.432   0.486   0.485   0.475   0.468   0.463   0.440   0.437   0.499
+longest prefix (ranker)    0.725   0.715 (ttl=15)                                          0.725
+
+-  snapshot, hit rate at mean age   0.25s   0.49s   1.0s    2.5s    5.0s    15s
+hybrid raw                         0.596   0.595   0.593   0.566   0.549   0.539
+hybrid ttl                         0.595   0.590   0.594   0.570   0.524   0.447
+hybrid survival                    0.595   0.590   0.589   0.568   0.539   0.510
+lmetric raw                        0.678   0.671   0.666   0.641   0.623   0.599
+lmetric ttl                        0.676   0.666   0.665   0.637   0.599   0.458
+lmetric survival                   0.676   0.666   0.666   0.642   0.611   0.563
+dynamo raw                         0.497   0.487   0.490   0.469   0.450   0.447
+dynamo survival                    0.496   0.496   0.480   0.471   0.458   0.439
+longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
