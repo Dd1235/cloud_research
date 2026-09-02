@@ -21,3 +21,6 @@
 
 - Dual Map : session_hash gets a great hit rate, but can get hotspots. also zipf skew. hash the same session key to two rings with different slats, theres a power-of-two-choices trick applied to affinity. it can improve hitrate as well, two warm workers per prefix evict less. power of two trick is Instead of sending a request to one random worker, pick two candidate workers and choose the better one.. 
 - p2c, implicitly discovers its lower capacity from its queue/load, in the heterogenous case.
+
+
+- in our 2/9/26 sim, p2c is better over random, but not round robin in homogeneous case, that is because round-robin splits a poisson stream deterministically, there is lower variance, and there is lower queueing. 

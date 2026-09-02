@@ -2,6 +2,7 @@ import argparse
 
 import numpy as np
 
+from sim.batched_worker import BatchedWorker
 from sim.engine import Engine
 from sim.metrics import fmt, summarize
 from sim.policies import POLICIES, make_policy
@@ -14,6 +15,41 @@ from sim.workload import generate
 # same requests for a given seed, which is what makes the comparison paired.
 POLICY_SEED_OFFSET = 1_000_003
 
+# One decode token on an unbatched stream costs c_iter + c_decode in the batched
+# worker, so these are split out of the sequential worker's c_decode. A single
+# request therefore takes the same time under both models, and any difference in
+# the results comes from batching rather than from a change of constants.
+C_PREFILL = 1e-3
+C_DECODE_SEQUENTIAL = 1e-2
+C_ITER_BATCHED = 8e-3
+C_DECODE_BATCHED = C_DECODE_SEQUENTIAL - C_ITER_BATCHED
+
+
+def build_workers(engine, worker_kind: str, n_workers: int, cache_blocks: int):
+    if worker_kind == "sequential":
+        return [
+            Worker(
+                engine,
+                wid=worker_id,
+                c_prefill=C_PREFILL,
+                c_decode=C_DECODE_SEQUENTIAL,
+                cache_blocks=cache_blocks,
+            )
+            for worker_id in range(n_workers)
+        ]
+
+    return [
+        BatchedWorker(
+            engine,
+            wid=worker_id,
+            c_prefill=C_PREFILL,
+            c_decode=C_DECODE_BATCHED,
+            c_iter=C_ITER_BATCHED,
+            cache_blocks=cache_blocks,
+        )
+        for worker_id in range(n_workers)
+    ]
+
 
 def run(
     policy_name: str,
@@ -22,24 +58,19 @@ def run(
     n_workers: int,
     rate: float,
     n_requests: int,
-    c_prefill: float,
-    c_decode: float,
     cache_blocks: int,
     zipf_alpha: float,
+    worker_kind: str = "sequential",
 ):
 
     engine = Engine(seed)
 
-    workers = [
-        Worker(
-            engine,
-            wid=worker_id,
-            c_prefill=c_prefill,
-            c_decode=c_decode,
-            cache_blocks=cache_blocks,
-        )
-        for worker_id in range(n_workers)
-    ]
+    workers = build_workers(
+        engine,
+        worker_kind,
+        n_workers,
+        cache_blocks,
+    )
 
     policy = make_policy(
         policy_name,
@@ -153,6 +184,12 @@ if __name__ == "__main__":
         default=256,
         help="prefix cache capacity per worker, in blocks (default: 256)",
     )
+    parser.add_argument(
+        "--worker",
+        choices=["sequential", "batched"],
+        default="sequential",
+        help="worker model: one request at a time, or continuous batching",
+    )
     args = parser.parse_args()
 
     main(
@@ -161,8 +198,7 @@ if __name__ == "__main__":
         n_workers=args.workers,
         rate=args.rate,
         n_requests=args.requests,
-        c_prefill=1e-3,
-        c_decode=1e-2,
         cache_blocks=args.cache_blocks,
         zipf_alpha=args.zipf,
+        worker_kind=args.worker,
     )
