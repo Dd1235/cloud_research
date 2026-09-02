@@ -191,26 +191,40 @@ class SurvivalView(CacheView):
     The earlier draft used a linear ramp age / T_C for the eviction chance; that
     over-predicted false positives by 3x against measurement, because the ramp
     is the right answer only when the block's access time is unknown.
+
+    The step at T_C is Che's idealisation. A radix cache that evicts leaves
+    first spreads its residence times well below T_C (measured p10 5.6 s to p90
+    13 s against a 14 s turnover), so the step under-predicts. residence_cdf,
+    when given, replaces the step with P[evicted by this idle age]; the worker
+    can report that curve as a small histogram, or a calibration run can fit it.
     """
 
-    def __init__(self, inner: CacheView, engine, tracker, turnover: float):
+    def __init__(self, inner: CacheView, engine, tracker, turnover: float, residence_cdf=None):
         assert turnover > 0
 
         self._inner = inner
         self._engine = engine
         self._tracker = tracker
         self.turnover = turnover
+        self._residence_cdf = residence_cdf
+
+    def gone_if_not_refreshed(self, known_age: float) -> float:
+        if self._residence_cdf is not None:
+            return self._residence_cdf(known_age)
+
+        return 1.0 if known_age >= self.turnover else 0.0
 
     def survival(self, block, known_age: float) -> float:
-        if known_age < self.turnover:
+        gone = self.gone_if_not_refreshed(known_age)
+        if gone == 0.0:
             return 1.0
 
         scrape_age = self._inner.age
         if scrape_age == float("inf"):
-            return 0.0
+            return 1.0 - gone
 
         rate = self._tracker.rate(block, self._engine.now)
-        return 1.0 - math.exp(-rate * scrape_age)
+        return 1.0 - math.exp(-rate * scrape_age) * gone
 
     def match_expected(self, blocks) -> float:
         path_survival = 1.0
@@ -240,7 +254,7 @@ VIEW_KINDS = ("perfect", "snapshot", "shadow")
 
 
 def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None, ttl=None,
-                      tracker=None, turnover=None):
+                      tracker=None, turnover=None, residence_cdf=None):
     """Returns a function worker -> CacheView for the requested view model.
 
     ttl wraps whichever view is built so entries older than it are not trusted;
@@ -267,6 +281,6 @@ def make_view_factory(kind: str, engine, *, period=None, shadow_blocks=None, ttl
 
     if tracker is not None:
         assert turnover is not None, "a survival view needs the cache turnover"
-        return lambda worker: SurvivalView(base(worker), engine, tracker, turnover)
+        return lambda worker: SurvivalView(base(worker), engine, tracker, turnover, residence_cdf)
 
     return base

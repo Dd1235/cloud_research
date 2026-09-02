@@ -268,3 +268,27 @@ def test_survival_view_trusts_young_blocks_and_rescues_old_hot_ones():
 
     # and the ordinal match is untouched: rankers never see the discount
     assert old.match(("hot", "cold")) == 2
+
+
+def test_survival_view_with_a_residence_cdf_discounts_blocks_that_usually_die_young():
+    from sim.blockrates import BlockRateTracker
+    from sim.views import PerfectView, SurvivalView
+
+    engine = Engine(seed=0)
+    worker = build_worker(engine)
+    worker.cache.insert(("a", "b"), now=0.0)
+    tracker = BlockRateTracker(window=100.0)     # nothing observed: no rescue
+    engine.now = 6.0
+
+    # a cache whose blocks are all evicted between 4 and 8 s of idleness
+    def residence_cdf(idle_age):
+        return min(max((idle_age - 4.0) / 4.0, 0.0), 1.0)
+
+    step = SurvivalView(PerfectView(worker.cache, engine), engine, tracker, turnover=14.0)
+    curve = SurvivalView(PerfectView(worker.cache, engine), engine, tracker, turnover=14.0,
+                         residence_cdf=residence_cdf)
+
+    # the step trusts a 6 s old block completely; the curve says half of such
+    # blocks are already gone, and the second block only survives if the first did
+    assert step.match_expected(("a", "b")) == pytest.approx(2.0)
+    assert curve.match_expected(("a", "b")) == pytest.approx(0.5 + 0.25)
