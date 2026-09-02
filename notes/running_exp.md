@@ -236,3 +236,21 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   lmetric survival (step)         0.673   0.676   0.666   0.666   0.646   0.621   0.600
   dynamo cost raw                 0.499   0.497   0.487   0.490   0.469   0.450   0.447
   dynamo cost survival (step)     0.499   0.497   0.495   0.483   0.475   0.470   0.457
+
+
+- stale view treatments, survival with the residence-cdf lifetime (2/9/26, E12 final): same sweep as the addendum above, the survival view now fed the residence-time cdf measured on each policy's own perfect run (`--survival-lifetime cdf`) instead of che's step, with nested losses and per-worker rescue. out/treatment_survival_cdf_sweep.png/.csv
+    - the model is calibrated in the loop, not just in the theory check: the view's own predicted false positives track the measured ones within ~1.5x at every age (hybrid 0.057 predicted vs 0.037 measured at 2.5s mean age, 0.072 vs 0.058 at 5s, 0.059 vs 0.071 at 15s; dynamo cost 0.077 / 0.052, 0.108 / 0.091, 0.092 / 0.099)
+    - and a calibrated discount still does not raise hit rate on snapshots. hybrid 0.567 / 0.547 / 0.536 at 2.5 / 5 / 15s against raw 0.566 / 0.549 / 0.539; lmetric a point lower than raw (0.633 / 0.606 / 0.590 vs 0.641 / 0.623 / 0.599); dynamo cost, the scorer with the most false positives, gains 0.3 / 1.2 / 1.3 points (0.472 / 0.462 / 0.460 vs 0.469 / 0.450 / 0.447), about what the step gave it
+    - the error accounting says why. the discount does what it should to the promises: hybrid's measured false positives fall by a third (0.100 → 0.071 at 15s). but they are traded for false negatives (0.031 → 0.046) and the routing regret, the share of tokens a warmer worker held at the instant of the decision, does not move (0.132 raw, 0.130 discounted, 0.087 with a fresh view). a discount can only lower the router's trust in what the scrape says; the loss under a scrape is what the scrape does not say
+    - what a scrape does not say is mostly the router's own doing: every request it dispatched since the scrape is invisible to it, and those are exactly the warm spots it created. the router has that information for free. so the treatment for a snapshot is the opposite of a discount: overlay the dispatches since the last refresh (llm-d's speculative entries, made principled), which attacks the blind spot rather than the stale promises. that run is next
+    - the two view models now have two different diseases and two different cures: a record-insert index that outgrew the cache is false-positive dominated and a survival discount or ttl at the turnover repairs it (80-90% recovered); a periodic scrape is blind-spot dominated and only fresher information repairs it
+
+-  hit rate, cdf survival          P=0     0.5      1       2       5      10      30
+  hybrid raw                      0.597   0.596   0.595   0.593   0.566   0.549   0.539
+  hybrid survival (cdf)           0.597   0.596   0.595   0.585   0.567   0.547   0.536
+  lmetric raw                     0.673   0.678   0.671   0.666   0.641   0.623   0.599
+  lmetric survival (cdf)          0.673   0.672   0.665   0.654   0.633   0.606   0.590
+  dynamo cost raw                 0.499   0.497   0.487   0.490   0.469   0.450   0.447
+  dynamo cost survival (cdf)      0.499   0.493   0.487   0.482   0.472   0.462   0.460
+  hybrid view fp, raw / cdf       0 / 0   .004/.004 .008/.006 .021/.014 .055/.037 .086/.058 .100/.071
+  hybrid regret, raw / cdf        .087    .085/.091 .085/.092 .088/.096 .112/.111 .124/.128 .132/.130
