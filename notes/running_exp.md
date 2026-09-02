@@ -254,3 +254,22 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   dynamo cost survival (cdf)      0.499   0.493   0.487   0.482   0.472   0.462   0.460
   hybrid view fp, raw / cdf       0 / 0   .004/.004 .008/.006 .021/.014 .055/.037 .086/.058 .100/.071
   hybrid regret, raw / cdf        .087    .085/.091 .085/.092 .088/.096 .112/.111 .124/.128 .132/.130
+
+
+- the overlay: a scrape plus the router's own dispatches since it (2/9/26, E13): same sweep, the snapshot view now keeps every dispatch since its last refresh in a small router-side prefix cache and reads the longer of the two matches; the refresh drops the overlay, since the copy then shows what the worker really kept (`--treatment overlay`, SnapshotView(overlay=True)). the router learns nothing new: it only stops forgetting what it did. out/treatment_overlay_sweep.png/.csv
+    - for the rankers staleness disappears. longest prefix holds 0.723-0.726 at every period, where the raw scrape fell 0.723 → 0.645 at 15s; regret 0.000 and view fn 0.000 throughout. its false positives still grow with age (0.026 at 15s) and, ordinal, it does not care
+    - the cardinal scorers recover to fresh-view quality up to about half a turnover. lmetric 0.673 at 2.5s mean age, equal to its perfect view (raw 0.641), 0.662 at 5s (raw 0.623), 0.639 at 15s (raw 0.599); hybrid 0.589 / 0.584 / 0.550 at 2.5 / 5 / 15s (raw 0.566 / 0.549 / 0.539, fresh 0.597); dynamo cost 0.490 / 0.474 / 0.456 (raw 0.469 / 0.450 / 0.447). hybrid's regret is 0.082-0.099 up to 5s of age against 0.087 fresh: the decisions are as good as with a fresh view
+    - beyond half a turnover the other disease takes over. hybrid's false positives reach 0.151 at 15s (raw 0.100: the overlay keeps promising dispatches the worker has since evicted, on top of the scrape's) and its regret climbs back to 0.128. that is the regime the survival discount was built for, so the complete treatment is overlay plus survival, run next
+    - the accounting is now clean. a scrape's loss is its blind spot (fn and regret, both zero once the router remembers its own dispatches); a record-insert index's loss is its stale promises (fp, repaired by a discount or a ttl at the turnover). every production router does one or the other: dynamo's fixed expiry and llm-d's speculative entries are the two halves of the same fix
+
+-  hit rate, overlay               P=0     0.5      1       2       5      10      30
+  longest prefix raw              0.723   0.716   0.715   0.714   0.697   0.692   0.645
+  longest prefix overlay          0.723   0.725   0.726   0.724   0.725   0.724   0.725
+  hybrid raw                      0.597   0.596   0.595   0.593   0.566   0.549   0.539
+  hybrid overlay                  0.597   0.602   0.601   0.595   0.589   0.584   0.550
+  lmetric raw                     0.673   0.678   0.671   0.666   0.641   0.623   0.599
+  lmetric overlay                 0.673   0.677   0.678   0.676   0.673   0.662   0.639
+  dynamo cost raw                 0.499   0.497   0.487   0.490   0.469   0.450   0.447
+  dynamo cost overlay             0.499   0.497   0.499   0.493   0.490   0.474   0.456
+  hybrid regret raw / overlay     .087    .085/.082 .085/.083 .088/.087 .112/.094 .124/.099 .132/.128
+  hybrid view fp raw / overlay    0       .004/.004 .008/.007 .021/.019 .055/.049 .086/.078 .100/.151
