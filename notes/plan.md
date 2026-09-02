@@ -30,11 +30,11 @@ Build a trace-driven simulator and router that study how KV-cache-aware routing 
 
 **Tools:** Simulator view modules and experiment scripts
 
-**Build:** Compare periodic snapshots, delayed/lost KV events, and router-maintained shadow indexes. Sweep view delay, load, prefix skew, and cache capacity.
+**Build:** Compare periodic snapshots, delayed/lost KV events, and router-maintained shadow indexes. Sweep view age, load, prefix skew, and cache capacity. Model the view's decay with the cache's LRU characteristic time (Che's approximation) and check the prediction against measured false-positive rates.
 
-**Goal:** Measure when stale information removes the benefit of prefix-aware routing.
+**Goal:** Measure when stale information removes the benefit of prefix-aware routing, and explain the curve rather than only draw it.
 
-**Metrics:** False-hit rate, false-miss opportunity, overlap error, herd/hotspot index, TTFT, goodput, and load balance.
+**Metrics:** View false-positive / false-negative rate, routing regret, execution false positives, overlap error, mean view age, TTFT, goodput, queue and load balance.
 
 **Resources:** [llm-d KV-cache-aware routing](https://llm-d.ai/docs/getting-started/architecture), [Dynamo](https://github.com/ai-dynamo/dynamo)
 
