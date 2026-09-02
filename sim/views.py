@@ -208,18 +208,37 @@ class SurvivalView(CacheView):
         self.turnover = turnover
         self._residence_cdf = residence_cdf
 
-    def gone_if_not_refreshed(self, known_age: float) -> float:
-        if self._residence_cdf is not None:
-            return self._residence_cdf(known_age)
+    def gone_if_not_refreshed(self, known_age: float, scrape_age: float) -> float:
+        """P[evicted by now | the view saw it present scrape_age ago, idle since].
 
-        return 1.0 if known_age >= self.turnover else 0.0
+        With a residence cdf F this is the hazard over the scrape interval,
+        (F(x) - F(x - a)) / (1 - F(x - a)) for known idle age x and scrape age a:
+        the block had already survived to x - a when the view saw it, so only
+        evictions inside the interval count. Using F(x) outright over-predicted
+        false positives 10-40x for fresh scrapes. A view with no scrape age (a
+        record-insert index) has not observed survival, so F(x) is right there.
+        Che's deterministic lifetime is the same rule with a step for F.
+        """
+        if self._residence_cdf is None:
+            return 1.0 if known_age >= self.turnover else 0.0
+
+        gone_by_now = self._residence_cdf(known_age)
+
+        if scrape_age <= 0.0 or scrape_age == float("inf"):
+            return gone_by_now
+
+        survived_to_scrape = 1.0 - self._residence_cdf(known_age - scrape_age)
+        if survived_to_scrape <= 0.0:
+            return 1.0
+
+        return min(max((gone_by_now - (1.0 - survived_to_scrape)) / survived_to_scrape, 0.0), 1.0)
 
     def survival(self, block, known_age: float) -> float:
-        gone = self.gone_if_not_refreshed(known_age)
+        scrape_age = self._inner.age
+        gone = self.gone_if_not_refreshed(known_age, scrape_age)
         if gone == 0.0:
             return 1.0
 
-        scrape_age = self._inner.age
         if scrape_age == float("inf"):
             return 1.0 - gone
 

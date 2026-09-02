@@ -292,3 +292,34 @@ def test_survival_view_with_a_residence_cdf_discounts_blocks_that_usually_die_yo
     # blocks are already gone, and the second block only survives if the first did
     assert step.match_expected(("a", "b")) == pytest.approx(2.0)
     assert curve.match_expected(("a", "b")) == pytest.approx(0.5 + 0.25)
+
+
+def test_residence_cdf_is_applied_as_a_hazard_over_the_scrape_interval():
+    from sim.blockrates import BlockRateTracker
+    from sim.views import SnapshotView, SurvivalView
+
+    engine = Engine(seed=0)
+    worker = build_worker(engine)
+    worker.cache.insert(("a",), now=0.0)
+    tracker = BlockRateTracker(window=100.0)     # never referenced: no rescue
+
+    # evictions spread uniformly over idle ages 0..10 s
+    def residence_cdf(idle_age):
+        return min(max(idle_age / 10.0, 0.0), 1.0)
+
+    snapshot = SnapshotView(engine, worker.cache, period=100.0)
+    engine.run(until=0.0)                        # scrape at t=0, block idle age 0
+    engine.now = 4.0                             # scrape is 4 s old, block idle 4 s
+
+    view = SurvivalView(snapshot, engine, tracker, turnover=10.0, residence_cdf=residence_cdf)
+
+    # the block was idle 0 s when scraped and is idle 4 s now: the hazard over
+    # [0, 4] is (F(4) - F(0)) / (1 - F(0)) = 0.4, so 0.6 of it is expected
+    assert view.match_expected(("a",)) == pytest.approx(0.6)
+
+    # a block that was already idle 6 s when scraped and is idle 10 s now has
+    # hazard (F(10) - F(6)) / (1 - F(6)) = 0.4 / 0.4 = 1: certainly gone
+    assert view.gone_if_not_refreshed(10.0, scrape_age=4.0) == pytest.approx(1.0)
+    # while F(10) alone would also say gone, F(4) alone would have said 0.4 for
+    # the first block instead of the hazard's 0.4 -- they agree only from idle 0
+    assert view.gone_if_not_refreshed(4.0, scrape_age=0.0) == pytest.approx(0.4)
