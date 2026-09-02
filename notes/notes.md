@@ -36,3 +36,26 @@
 * `NO_TOKEN` means: during a partial prefill iteration, that request did computation but **did not generate a token**. So you must not record `token_time` or decrement `tokens_left`.
 
 Core takeaway: **chunking trades a bit of TTFT for much smoother token streaming, but only becomes worthwhile for sufficiently long prompts.**
+
+- cache views (2/9/26): a production router never reads a worker's real cache. what it reads is a *view*, and the view is stale in one of three ways
+    - A. snapshot: copy the cache every P seconds (a metrics scrape). age is uniform in [0, P), mean P/2. this is what the mac cluster will physically do
+    - C. shadow: the router keeps its own prefix cache and inserts whatever it routed (record-insert). it never sees worker evictions. llm-d "approximate" mode
+    - B. delayed events: the true cache as of t - d (kv events over a bus). not built yet, needs insert/evict hooks on the cache
+    - policies read `worker.view.match(...)`; the worker itself always reads `worker.cache`. with the perfect view they are the same object
+    - the knob is the refresh *period*; what matters is the *age* the router actually saw at each decision, so the router records `view_age_at_dispatch` and plots use the measured mean age, not P
+
+- what a wrong view costs, split by where the error lives (all as a fraction of prompt tokens)
+    - view fp: the view promised tokens the chosen worker did not hold (metadata error, stale-positive)
+    - view fn: the chosen worker held tokens the view did not know about (metadata error, stale-negative)
+    - routing regret: a warmer worker existed at the instant of the decision (decision error; hybrid has this even with a perfect view, by design, because it trades locality for balance)
+    - execution fp: promised tokens gone by the time the worker admitted the request. equals view fp plus the drift between dispatch and admission; at rate 6 the drift is ~0.001, so the error really is in the view
+    - the perfect view is *admission* truth, not routing knowledge: two requests arriving at the same instant are both routed before the worker admits either, so the second sees nothing cached even though it will reuse the first's prefill. the shadow view does see the first dispatch. that is why shadow can beat perfect on bursts
+
+- normalising staleness: two candidates for the x axis
+    - arrivals per refresh, rate x P (balls-into-bins theory: the batch size)
+    - age / cache turnover time, where turnover = capacity / eviction rate measured from the perfect-view run (~15s here). a snapshot older than one turnover describes a cache that has been fully replaced since
+    - measured: view fp is about 5% of prompt tokens per turnover of age, and hybrid churns its caches faster (turnover 10s) so it is more staleness-sensitive at the same age. that points at turnover as the right normalisation, the scaling figure checks it
+
+- daemon events: the engine now takes `schedule(..., daemon=True)`. a daemon (view refresh, load sampler) reschedules itself forever, so it must not count as work; `run()` stops when no live events remain, `run(until=T)` executes everything up to T including daemons. without this a snapshot view would keep the simulation alive forever
+
+- `queue_cv` vs `load_cv`: load_cv is the CoV of total busy time per worker, i.e. whether the work was shared. queue_cv is the CoV of the time-averaged outstanding count from a 100ms sampler, i.e. whether the *queueing* was shared. a worker that is swamped half the time and idle the other half has a fine load_cv and a bad queue_cv
