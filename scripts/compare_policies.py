@@ -345,6 +345,12 @@ if __name__ == "__main__":
         default="admission",
         help="batched worker: when a request's blocks become reusable (default: admission)",
     )
+    parser.add_argument(
+        "--overlap-source",
+        choices=["raw", "expected"],
+        default="raw",
+        help="cardinal scorers read the view's raw promise or its survival expectation (default: raw)",
+    )
     args = parser.parse_args()
 
     workload = None
@@ -372,7 +378,7 @@ if __name__ == "__main__":
         c_prefill=args.c_prefill,
         c_decode_batched=args.c_decode,
         max_batch=args.max_batch,
-        policy_options={"key_blocks": args.session_depth},
+        policy_options={"key_blocks": args.session_depth, "overlap_source": args.overlap_source},
         view_ttl=args.view_ttl,
         survival_turnover=args.survival_turnover,
         kv_available_at=args.kv_available_at,
