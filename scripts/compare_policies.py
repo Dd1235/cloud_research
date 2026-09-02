@@ -6,6 +6,8 @@ from sim.batched_worker import BatchedWorker
 from sim.engine import Engine
 from sim.metrics import fmt, summarize
 from sim.policies import POLICIES, make_policy
+from sim.router import Router
+from sim.views import make_view_factory
 from sim.workers import Worker
 from sim.workload import generate
 
@@ -69,6 +71,9 @@ def run(
     zipf_alpha: float,
     worker_kind: str = "sequential",
     prefill_budget: int | None = None,
+    view_kind: str = "perfect",
+    view_period: float | None = None,
+    shadow_blocks: int | None = None,
 ):
 
     engine = Engine(seed)
@@ -93,14 +98,21 @@ def run(
         zipf_alpha=zipf_alpha,
     )
 
-    def dispatch(req) -> None:
-        chosen_worker = policy.choose(req, workers)
-        chosen_worker.submit(req)
+    # the router installs the cache view on every worker and owns dispatch, so
+    # the view error accounting happens here for every script
+    router = Router(
+        engine,
+        policy,
+        workers,
+        make_view_factory(
+            view_kind,
+            engine,
+            period=view_period,
+            shadow_blocks=shadow_blocks or cache_blocks,
+        ),
+    )
 
-    for req in requests:
-        delay = req.arrival - engine.now
-        engine.schedule(delay, dispatch, req)
-
+    router.replay(requests)
     engine.run()
 
     return summarize(requests, workers)
