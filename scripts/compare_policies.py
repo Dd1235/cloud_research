@@ -89,6 +89,7 @@ def run(
     shadow_blocks: int | None = None,
     view_ttl: float | None = None,
     survival_turnover: float | None = None,
+    residence_cdf=None,
     kv_available_at: str = "admission",
     workload=None,
     block_size: int = 16,
@@ -154,6 +155,7 @@ def run(
             ttl=view_ttl,
             tracker=tracker,
             turnover=survival_turnover,
+            residence_cdf=residence_cdf,
         ),
         tracker=tracker,
     )
