@@ -99,6 +99,7 @@ def view_error_rates(requests) -> dict:
 
     if not routed:
         return {
+            "mean_view_age": 0.0,
             "view_fp_rate": 0.0,
             "view_fn_rate": 0.0,
             "routing_regret_rate": 0.0,
@@ -133,7 +134,17 @@ def view_error_rates(requests) -> dict:
         if req.prompt_tokens
     ]
 
+    # the staleness actually experienced, as opposed to the refresh period that
+    # produced it; infinite ages (a view that never refreshed) are left out
+    observed_ages = [
+        req.view_age_at_dispatch
+        for req in routed
+        if req.view_age_at_dispatch is not None
+        and req.view_age_at_dispatch != float("inf")
+    ]
+
     return {
+        "mean_view_age": float(np.mean(observed_ages)) if observed_ages else 0.0,
         "view_fp_rate": view_fp_tokens / prompt_tokens,
         "view_fn_rate": view_fn_tokens / prompt_tokens,
         "routing_regret_rate": routing_regret_tokens / prompt_tokens,

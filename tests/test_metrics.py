@@ -82,6 +82,7 @@ def test_requests_that_never_saw_a_router_are_ignored():
     rates = view_error_rates([unrouted])
 
     assert rates == {
+        "mean_view_age": 0.0,
         "view_fp_rate": 0.0,
         "view_fn_rate": 0.0,
         "routing_regret_rate": 0.0,
