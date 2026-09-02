@@ -217,6 +217,24 @@ if __name__ == "__main__":
         default=0,
         help="batched worker only: prompt tokens per iteration, 0 for unchunked",
     )
+    parser.add_argument(
+        "--view",
+        choices=["perfect", "snapshot", "shadow"],
+        default="perfect",
+        help="the router's picture of each worker's cache (default: perfect)",
+    )
+    parser.add_argument(
+        "--view-period",
+        type=float,
+        default=None,
+        help="snapshot view only: seconds between refreshes of the router's copy",
+    )
+    parser.add_argument(
+        "--shadow-blocks",
+        type=int,
+        default=None,
+        help="shadow view only: capacity of the router's own index (default: cache blocks)",
+    )
     args = parser.parse_args()
 
     main(
@@ -229,4 +247,7 @@ if __name__ == "__main__":
         zipf_alpha=args.zipf,
         worker_kind=args.worker,
         prefill_budget=args.prefill_budget or None,
+        view_kind=args.view,
+        view_period=args.view_period,
+        shadow_blocks=args.shadow_blocks,
     )
