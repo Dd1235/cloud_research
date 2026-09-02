@@ -69,9 +69,14 @@ def survival_lifetime_cdf(policy_name, treatment, survival_lifetime, *, zipf_alp
     if treatment not in ("survival", "overlay_survival") or survival_lifetime == "step":
         return None
 
-    if common.get("workload") is not None:
-        raise SystemExit("the cdf lifetime is measured on the synthetic workload only, for now")
-
+    # everything run() knows about the workers and the workload goes through,
+    # so a trace measures its residence times on the same fleet it is routed on
+    passthrough = {
+        key: common[key]
+        for key in ("workload", "policy_options", "prefill_budget", "block_size", "c_prefill",
+                    "c_decode_batched", "max_batch", "kv_available_at")
+        if key in common
+    }
     residence = residence_times(
         seed=0,
         policy_name=policy_name,
@@ -81,6 +86,7 @@ def survival_lifetime_cdf(policy_name, treatment, survival_lifetime, *, zipf_alp
         n_requests=common["n_requests"],
         cache_blocks=common["cache_blocks"],
         worker_kind=common.get("worker_kind", "batched"),
+        **passthrough,
     )
     return residence["residence_cdf"]
 

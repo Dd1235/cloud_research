@@ -37,8 +37,13 @@ from sim.workload import generate
 
 
 def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alpha, worker_kind,
-                    policy_name="longest_prefix", population="all"):
+                    policy_name="longest_prefix", population="all", workload=None,
+                    policy_options=None, prefill_budget=None, **worker_settings):
     """Perfect-view run with the eviction log switched on; returns idle times and rates.
+
+    workload, when given, is a seed -> requests factory (a trace replay) and
+    replaces the synthetic generator; worker_settings are passed through to
+    build_workers so a trace run gets the trace's block size and costs.
 
     population picks whose idle times make up the residence distribution:
     "all" evicted blocks, or only the "reused" ones (re-referenced at least
@@ -46,14 +51,17 @@ def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alp
     blocks, which by construction were reused, so the reused population is the
     one whose lifetime the survival model should be fed."""
     engine = Engine(seed)
-    workers = build_workers(engine, worker_kind, n_workers, cache_blocks)
+    workers = build_workers(engine, worker_kind, n_workers, cache_blocks, prefill_budget, **worker_settings)
 
     for worker in workers:
         worker.cache = PrefixCache(cache_blocks, record_residence=True)
         worker.view = worker.cache   # the router re-installs a perfect view below
 
-    policy = make_policy(policy_name, np.random.default_rng(seed + POLICY_SEED_OFFSET))
-    requests = generate(np.random.default_rng(seed), n_requests, rate, zipf_alpha=zipf_alpha)
+    policy = make_policy(policy_name, np.random.default_rng(seed + POLICY_SEED_OFFSET), policy_options)
+    if workload is not None:
+        requests = workload(seed)
+    else:
+        requests = generate(np.random.default_rng(seed), n_requests, rate, zipf_alpha=zipf_alpha)
     router = Router(engine, policy, workers)
     OutstandingSampler(engine, workers)
     router.replay(requests)
