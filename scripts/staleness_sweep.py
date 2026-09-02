@@ -308,6 +308,7 @@ def main():
     parser.add_argument("--c-prefill", type=float, default=C_PREFILL, help=f"seconds per uncached prompt token (default: {C_PREFILL})")
     parser.add_argument("--c-decode", type=float, default=C_DECODE_BATCHED, help=f"batched worker: seconds per decoding sequence per iteration (default: {C_DECODE_BATCHED})")
     parser.add_argument("--max-batch", type=int, default=16, help="batched worker: sequences resident at once (default: 16)")
+    parser.add_argument("--session-depth", type=int, default=1, help="session hash and dualmap: leading blocks that identify a session (default: 1)")
     args = parser.parse_args()
 
     policy_names = resolve_policy_names(args.policies)
@@ -326,6 +327,7 @@ def main():
         c_prefill=args.c_prefill,
         c_decode_batched=args.c_decode,
         max_batch=args.max_batch,
+        policy_options={"key_blocks": args.session_depth},
     )
 
     rate = args.rate

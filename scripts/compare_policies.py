@@ -89,6 +89,7 @@ def run(
     c_prefill: float = C_PREFILL,
     c_decode_batched: float = C_DECODE_BATCHED,
     max_batch: int = 16,
+    policy_options: dict | None = None,
 ):
 
     engine = Engine(seed)
@@ -108,6 +109,7 @@ def run(
     policy = make_policy(
         policy_name,
         np.random.default_rng(seed + POLICY_SEED_OFFSET),
+        policy_options,
     )
 
     # a workload factory takes the seed, so a trace (which ignores it) and the
@@ -300,6 +302,12 @@ if __name__ == "__main__":
         default=16,
         help="batched worker: sequences resident at once (default: 16)",
     )
+    parser.add_argument(
+        "--session-depth",
+        type=int,
+        default=1,
+        help="session hash and dualmap: leading blocks that identify a session (default: 1)",
+    )
     args = parser.parse_args()
 
     workload = None
@@ -327,4 +335,5 @@ if __name__ == "__main__":
         c_prefill=args.c_prefill,
         c_decode_batched=args.c_decode,
         max_batch=args.max_batch,
+        policy_options={"key_blocks": args.session_depth},
     )
