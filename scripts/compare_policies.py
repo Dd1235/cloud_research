@@ -7,6 +7,7 @@ from sim.engine import Engine
 from sim.metrics import fmt, summarize
 from sim.policies import POLICIES, make_policy
 from sim.router import Router
+from sim.traces import MOONCAKE_BLOCK_SIZE, load_mooncake
 from sim.views import make_view_factory
 from sim.workers import Worker
 from sim.workload import generate
@@ -33,15 +34,19 @@ def build_workers(
     n_workers: int,
     cache_blocks: int,
     prefill_budget: int | None = None,
+    *,
+    block_size: int = 16,
+    c_prefill: float = C_PREFILL,
 ):
     if worker_kind == "sequential":
         return [
             Worker(
                 engine,
                 wid=worker_id,
-                c_prefill=C_PREFILL,
+                c_prefill=c_prefill,
                 c_decode=C_DECODE_SEQUENTIAL,
                 cache_blocks=cache_blocks,
+                block_size=block_size,
             )
             for worker_id in range(n_workers)
         ]
@@ -50,10 +55,11 @@ def build_workers(
         BatchedWorker(
             engine,
             wid=worker_id,
-            c_prefill=C_PREFILL,
+            c_prefill=c_prefill,
             c_decode=C_DECODE_BATCHED,
             c_iter=C_ITER_BATCHED,
             cache_blocks=cache_blocks,
+            block_size=block_size,
             prefill_budget=prefill_budget,
         )
         for worker_id in range(n_workers)
@@ -74,6 +80,9 @@ def run(
     view_kind: str = "perfect",
     view_period: float | None = None,
     shadow_blocks: int | None = None,
+    workload=None,
+    block_size: int = 16,
+    c_prefill: float = C_PREFILL,
 ):
 
     engine = Engine(seed)
@@ -84,6 +93,8 @@ def run(
         n_workers,
         cache_blocks,
         prefill_budget,
+        block_size=block_size,
+        c_prefill=c_prefill,
     )
 
     policy = make_policy(
@@ -91,11 +102,17 @@ def run(
         np.random.default_rng(seed + POLICY_SEED_OFFSET),
     )
 
-    requests = generate(
-        np.random.default_rng(seed),
-        n_requests,
-        rate,
-        zipf_alpha=zipf_alpha,
+    # a workload factory takes the seed, so a trace (which ignores it) and the
+    # synthetic generator (which needs it) fit the same slot
+    requests = (
+        workload(seed)
+        if workload is not None
+        else generate(
+            np.random.default_rng(seed),
+            n_requests,
+            rate,
+            zipf_alpha=zipf_alpha,
+        )
     )
 
     # the router installs the cache view on every worker and owns dispatch, so
@@ -144,6 +161,15 @@ def resolve_policy_names(requested: str) -> list[str]:
             )
 
     return names
+
+
+def trace_workload(path: str, *, speedup: float, limit: int | None):
+    """A workload factory that replays a Mooncake trace, reloaded per run.
+
+    Reloading is deliberate: Request objects carry per-run state (token times,
+    dispatch fields), so sharing one list across seeds would leak it.
+    """
+    return lambda seed: load_mooncake(path, speedup=speedup, limit=limit)
 
 
 def main(policy_names: list[str], seeds: int = 5, **common):
@@ -235,7 +261,31 @@ if __name__ == "__main__":
         default=None,
         help="shadow view only: capacity of the router's own index (default: cache blocks)",
     )
+    parser.add_argument(
+        "--trace",
+        default=None,
+        help="replay a mooncake jsonl trace instead of the synthetic workload; --rate and --zipf are then ignored",
+    )
+    parser.add_argument(
+        "--speedup",
+        type=float,
+        default=1.0,
+        help="trace only: compress arrival gaps by this factor (default: 1.0)",
+    )
+    parser.add_argument(
+        "--c-prefill",
+        type=float,
+        default=C_PREFILL,
+        help=f"seconds per uncached prompt token (default: {C_PREFILL})",
+    )
     args = parser.parse_args()
+
+    workload = None
+    block_size = 16
+    if args.trace is not None:
+        workload = trace_workload(args.trace, speedup=args.speedup, limit=args.requests)
+        block_size = MOONCAKE_BLOCK_SIZE
+        print(f"replaying {args.trace} (first {args.requests} requests, speedup {args.speedup}); --rate and --zipf ignored")
 
     main(
         resolve_policy_names(args.policies),
@@ -250,4 +300,7 @@ if __name__ == "__main__":
         view_kind=args.view,
         view_period=args.view_period,
         shadow_blocks=args.shadow_blocks,
+        workload=workload,
+        block_size=block_size,
+        c_prefill=args.c_prefill,
     )
