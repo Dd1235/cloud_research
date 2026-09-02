@@ -17,8 +17,9 @@ class DualMap:
 
     name = "dualmap"
 
-    def __init__(self, vnodes: int = 64):
+    def __init__(self, vnodes: int = 64, key_blocks: int = 1):
         self.vnodes = vnodes
+        self.key_blocks = key_blocks
         self._rings = None
         self._worker_count = None
 
@@ -37,7 +38,7 @@ class DualMap:
             self._worker_count = len(workers)
             self._rings = self._build_rings(self._worker_count)
 
-        key = session_key(req)
+        key = session_key(req, self.key_blocks)
 
         candidate_ids = {
             ring.lookup(key)

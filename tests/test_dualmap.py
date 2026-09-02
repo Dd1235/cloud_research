@@ -91,3 +91,21 @@ def test_placement_is_stable_across_policy_instances():
     second_run = DualMap().choose(req, workers).id
 
     assert first_run == second_run
+
+
+def test_deeper_session_key_separates_requests_that_share_a_system_prompt():
+    workers = build_workers(8)
+
+    # every request starts with the same block, like a shared system prompt,
+    # and differs from the second block on. keyed on one block they all land on
+    # the same two workers; keyed on two blocks they spread
+    requests = [
+        build_request(request_id, (("sys", 0), ("conv", request_id), ("s", request_id)))
+        for request_id in range(40)
+    ]
+
+    one_block = {DualMap(key_blocks=1).choose(req, workers).id for req in requests}
+    two_blocks = {DualMap(key_blocks=2).choose(req, workers).id for req in requests}
+
+    assert len(one_block) <= 2
+    assert len(two_blocks) >= 6
