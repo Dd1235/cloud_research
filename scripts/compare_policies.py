@@ -38,6 +38,8 @@ def build_workers(
     *,
     block_size: int = 16,
     c_prefill: float = C_PREFILL,
+    c_decode_batched: float = C_DECODE_BATCHED,
+    max_batch: int = 16,
 ):
     if worker_kind == "sequential":
         return [
@@ -57,10 +59,11 @@ def build_workers(
             engine,
             wid=worker_id,
             c_prefill=c_prefill,
-            c_decode=C_DECODE_BATCHED,
+            c_decode=c_decode_batched,
             c_iter=C_ITER_BATCHED,
             cache_blocks=cache_blocks,
             block_size=block_size,
+            max_batch=max_batch,
             prefill_budget=prefill_budget,
         )
         for worker_id in range(n_workers)
@@ -84,6 +87,8 @@ def run(
     workload=None,
     block_size: int = 16,
     c_prefill: float = C_PREFILL,
+    c_decode_batched: float = C_DECODE_BATCHED,
+    max_batch: int = 16,
 ):
 
     engine = Engine(seed)
@@ -96,6 +101,8 @@ def run(
         prefill_budget,
         block_size=block_size,
         c_prefill=c_prefill,
+        c_decode_batched=c_decode_batched,
+        max_batch=max_batch,
     )
 
     policy = make_policy(
@@ -281,6 +288,18 @@ if __name__ == "__main__":
         default=C_PREFILL,
         help=f"seconds per uncached prompt token (default: {C_PREFILL})",
     )
+    parser.add_argument(
+        "--c-decode",
+        type=float,
+        default=C_DECODE_BATCHED,
+        help=f"batched worker: seconds per decoding sequence per iteration (default: {C_DECODE_BATCHED})",
+    )
+    parser.add_argument(
+        "--max-batch",
+        type=int,
+        default=16,
+        help="batched worker: sequences resident at once (default: 16)",
+    )
     args = parser.parse_args()
 
     workload = None
@@ -306,4 +325,6 @@ if __name__ == "__main__":
         workload=workload,
         block_size=block_size,
         c_prefill=args.c_prefill,
+        c_decode_batched=args.c_decode,
+        max_batch=args.max_batch,
     )
