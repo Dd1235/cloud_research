@@ -5,6 +5,7 @@ def summarize(
     requests,
     workers,
     warmup_frac: float = 0.1,
+    sampler=None,
 ) -> dict:
     done = sorted(
         (req for req in requests if req.done),
@@ -44,6 +45,18 @@ def summarize(
 
     view_errors = view_error_rates(done)
 
+    # imbalance of queueing, not of total work: the time average of each
+    # worker's outstanding count, after the warm up, from the sampler daemon.
+    # 0.0 when no sampler ran, as in the unit tests that build workers by hand
+    queue_cv = 0.0
+    if sampler is not None and done:
+        mean_outstanding = np.asarray(
+            sampler.mean_outstanding(since=done[0].arrival),
+            dtype=float,
+        )
+        if mean_outstanding.mean() > 0:
+            queue_cv = float(mean_outstanding.std() / mean_outstanding.mean())
+
     return {
         "n": len(done),
         "ttft_p50": float(np.percentile(ttft, 50)),
@@ -66,6 +79,7 @@ def summarize(
             if load.mean() > 0
             else 0.0
         ),
+        "queue_cv": queue_cv,
         "evictions": sum(
             worker.cache.evictions
             for worker in workers
