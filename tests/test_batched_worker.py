@@ -210,3 +210,32 @@ def test_max_batch_limits_how_many_run_together():
 
     assert len(worker.running) == 2
     assert len(worker.queue) == 3
+
+
+def test_same_iteration_follower_reuses_nothing_when_kv_is_available_at_prefill_done():
+    def follower_cached_tokens(kv_available_at):
+        engine = Engine(seed=0)
+        worker = build_worker(engine, block_size=16, kv_available_at=kv_available_at)
+
+        leader = build_request(1, prompt_tokens=32, output_tokens=1, blocks=("x", "y"))
+        follower = build_request(2, prompt_tokens=32, output_tokens=1, blocks=("x", "y"))
+        worker.submit(leader)
+        worker.submit(follower)
+        engine.run()
+
+        # a third request after the prefill finished hits either way
+        late = build_request(3, prompt_tokens=32, output_tokens=1, blocks=("x", "y"))
+        late.arrival = engine.now
+        worker.submit(late)
+        engine.run()
+
+        return follower.cached_tokens, late.cached_tokens, worker.busy_time
+
+    # free in-flight sharing: the follower counts blocks the leader has not computed
+    follower_hit, late_hit, busy_free = follower_cached_tokens("admission")
+    assert follower_hit == 32 and late_hit == 32
+
+    # realistic: the follower prefills the same prompt again, and pays for it
+    follower_miss, late_hit_again, busy_real = follower_cached_tokens("prefill_done")
+    assert follower_miss == 0 and late_hit_again == 32
+    assert busy_real > busy_free

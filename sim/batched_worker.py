@@ -17,7 +17,7 @@ class _Sequence:
     step per iteration, which is what continuous batching means.
     """
 
-    __slots__ = ("req", "prefill_left", "tokens_left")
+    __slots__ = ("req", "prefill_left", "tokens_left", "blocks_pending_insert")
 
     def __init__(self, req: Request, prefill_left: int):
         self.req = req
@@ -25,6 +25,8 @@ class _Sequence:
         self.prefill_left = prefill_left
         # output tokens still to be emitted, the first one included
         self.tokens_left = req.output_tokens
+        # blocks that enter the cache only once this sequence's prefill is done
+        self.blocks_pending_insert = None
 
 
 class BatchedWorker:
@@ -64,6 +66,7 @@ class BatchedWorker:
         block_size: int = 16,
         max_batch: int = 16,
         prefill_budget: int | None = None,
+        kv_available_at: str = "admission",
     ):
         self.engine = engine
         self.id = wid
@@ -73,6 +76,14 @@ class BatchedWorker:
 
         self.block_size = block_size
         self.max_batch = max_batch
+
+        # when a request's blocks become reusable by others. "admission" inserts
+        # them as soon as the request is admitted, so a follower admitted in the
+        # same iteration hits on blocks nobody has computed yet: free in-flight
+        # sharing. "prefill_done" inserts them when the prefill finishes, which
+        # is what an engine that does not batch shared prefixes actually does
+        assert kv_available_at in ("admission", "prefill_done")
+        self.kv_available_at = kv_available_at
         # most prompt tokens one iteration may process. None means a prompt is
         # prefilled in a single iteration, however long it is
         self.prefill_budget = prefill_budget
@@ -144,9 +155,15 @@ class BatchedWorker:
 
             self.tokens_processed += req.prompt_tokens
             self.tokens_reused += req.cached_tokens
-            self.cache.insert(req.blocks, self.engine.now)
 
-            self.running.append(_Sequence(req, uncached_tokens))
+            sequence = _Sequence(req, uncached_tokens)
+
+            if self.kv_available_at == "admission":
+                self.cache.insert(req.blocks, self.engine.now)
+            else:
+                sequence.blocks_pending_insert = req.blocks
+
+            self.running.append(sequence)
 
     def _step(self) -> None:
         self._step_scheduled = False
@@ -221,6 +238,11 @@ class BatchedWorker:
 
             if action is FIRST_TOKEN:
                 sequence.req.first_token = now
+
+                # the prefill just finished: only now do its blocks exist
+                if sequence.blocks_pending_insert is not None:
+                    self.cache.insert(sequence.blocks_pending_insert, now)
+                    sequence.blocks_pending_insert = None
 
             sequence.req.token_times.append(now)
             sequence.tokens_left -= 1
