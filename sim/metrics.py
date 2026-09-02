@@ -118,6 +118,7 @@ def view_error_rates(requests) -> dict:
             "view_fn_rate": 0.0,
             "routing_regret_rate": 0.0,
             "execution_fp_rate": 0.0,
+            "predicted_fp_rate": 0.0,
             "overlap_mae": 0.0,
         }
 
@@ -148,6 +149,15 @@ def view_error_rates(requests) -> dict:
         if req.prompt_tokens
     ]
 
+    # what the survival view itself predicted it would lose: promised minus
+    # expected tokens. compared against view fp this is the theory check.
+    # zero when no view offered an expectation
+    predicted_fp_tokens = sum(
+        req.estimated_cached_tokens - req.expected_cached_tokens
+        for req in routed
+        if req.expected_cached_tokens is not None
+    )
+
     # the staleness actually experienced, as opposed to the refresh period that
     # produced it; infinite ages (a view that never refreshed) are left out
     observed_ages = [
@@ -163,6 +173,7 @@ def view_error_rates(requests) -> dict:
         "view_fn_rate": view_fn_tokens / prompt_tokens,
         "routing_regret_rate": routing_regret_tokens / prompt_tokens,
         "execution_fp_rate": execution_fp_tokens / prompt_tokens,
+        "predicted_fp_rate": predicted_fp_tokens / prompt_tokens,
         "overlap_mae": float(np.mean(overlap_errors)) if overlap_errors else 0.0,
     }
 

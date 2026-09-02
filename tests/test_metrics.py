@@ -66,6 +66,21 @@ def test_each_error_rate_is_computed_from_its_own_pair_of_fields():
     assert rates["routing_regret_rate"] == pytest.approx(40 / 200)
     assert rates["execution_fp_rate"] == pytest.approx(30 / 200)
     assert rates["overlap_mae"] == pytest.approx((0.2 + 0.4) / 2)
+    assert rates["predicted_fp_rate"] == 0.0          # no view offered an expectation
+
+
+def test_predicted_fp_is_promised_minus_expected():
+    req = routed_request(
+        1,
+        prompt_tokens=100,
+        estimated=60,
+        true_at_dispatch=40,
+        best_at_dispatch=60,
+        cached_at_admission=40,
+    )
+    req.expected_cached_tokens = 45.0
+
+    assert view_error_rates([req])["predicted_fp_rate"] == pytest.approx(15 / 100)
 
 
 def test_requests_that_never_saw_a_router_are_ignored():
@@ -87,6 +102,7 @@ def test_requests_that_never_saw_a_router_are_ignored():
         "view_fn_rate": 0.0,
         "routing_regret_rate": 0.0,
         "execution_fp_rate": 0.0,
+        "predicted_fp_rate": 0.0,
         "overlap_mae": 0.0,
     }
 
