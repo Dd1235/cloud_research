@@ -181,3 +181,45 @@ def test_router_records_the_survival_views_expected_tokens():
 
     # the dispatch itself was observed by the tracker only after the estimate
     assert tracker.rate("a", now=15.0) == pytest.approx(1 / 100)
+
+
+def test_block_samples_carry_the_believed_age_and_whether_the_promise_was_false():
+    from sim.views import SnapshotView
+
+    engine = Engine(seed=0)
+    workers = build_workers(engine, 1, cache_blocks=2)
+    router = Router(
+        engine,
+        LongestPrefix(),
+        workers,
+        view_factory=lambda worker: SnapshotView(engine, worker.cache, period=100.0),
+        record_block_samples=True,
+    )
+
+    # the snapshot is taken at t=0, after these two blocks went in
+    workers[0].cache.insert(("a", "b"), now=0.0)
+    engine.run(until=0.0)
+
+    # the cache only holds two blocks, so this evicts both of them
+    engine.now = 1.0
+    workers[0].cache.insert(("x", "y"), now=1.0)
+
+    # at t=2 the view still promises a and b, believed 2 s old, from a 2 s old picture
+    engine.now = 2.0
+    req = Request(id=1, arrival=2.0, prompt_tokens=48, output_tokens=1, blocks=("a", "b", "c"))
+    router.dispatch(req)
+
+    assert req.estimated_cached_tokens == 32
+    assert req.true_cached_tokens_at_dispatch == 0
+    assert router.block_samples == [
+        (pytest.approx(2.0), pytest.approx(2.0), True),
+        (pytest.approx(2.0), pytest.approx(2.0), True),
+    ]
+
+
+def test_block_samples_are_off_by_default():
+    engine = Engine(seed=0)
+    workers = build_workers(engine, 1)
+    router = Router(engine, LongestPrefix(), workers)
+
+    assert router.block_samples is None

@@ -10,10 +10,16 @@ class Router:
     without knowing they exist.
     """
 
-    def __init__(self, engine, policy, workers, view_factory=None, tracker=None):
+    def __init__(self, engine, policy, workers, view_factory=None, tracker=None,
+                 record_block_samples: bool = False):
         self.engine = engine
         self.policy = policy
         self.workers = workers
+
+        # opt-in, for the theory check: one (known block age, view age, was
+        # the promise false) sample per promised block. off by default because
+        # it grows by every matched block of every request
+        self.block_samples = [] if record_block_samples else None
 
         # per-block reference rates from the router's own dispatches; only the
         # survival view reads it, so it is optional
@@ -66,10 +72,20 @@ class Router:
         )
 
         # what that worker really held right now
-        req.true_cached_tokens_at_dispatch = cached_tokens_for(
-            chosen.cache.match(req.blocks),
-            chosen,
-        )
+        true_blocks = chosen.cache.match(req.blocks)
+        req.true_cached_tokens_at_dispatch = cached_tokens_for(true_blocks, chosen)
+
+        # a match is prefix-wise, so the promised blocks past the true match
+        # are exactly the false promises. each sample carries how old the view
+        # believed the block to be, so false positives can be binned by age
+        if self.block_samples is not None:
+            match_with_ages = getattr(chosen.view, "match_with_ages", None)
+            if match_with_ages is not None:
+                known_ages = match_with_ages(req.blocks)
+                self.block_samples.extend(
+                    (known_age, chosen.view.age, index >= true_blocks)
+                    for index, known_age in enumerate(known_ages)
+                )
 
         # the most any worker really held right now: the best decision possible
         req.best_cached_tokens_at_dispatch = max(
