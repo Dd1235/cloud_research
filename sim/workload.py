@@ -27,8 +27,20 @@ def generate(
     suffix_blocks: tuple[int, int] = (4, 16),
     output_tokens: tuple[int, int] = (16, 64),
     block_size: int = 16,
+    universal_blocks: int = 0,
 ) -> list[Request]:
+    """universal_blocks prepends the same blocks to every request, the way a
+    shared system prompt begins every real conversation. The Mooncake traces
+    have exactly this shape (conversation: one distinct first block in 6000
+    requests) and it is what broke first-block session keys and let
+    record-insert views lock a pure ranker onto one worker; the knob makes
+    those pathologies reproducible and sweepable instead of trace anecdotes."""
     probabilities = zipf_probs(n_prefixes, zipf_alpha)
+
+    universal_prefix = tuple(
+        ("u", block_index)
+        for block_index in range(universal_blocks)
+    )
 
     time = 0.0
     requests = []
@@ -56,7 +68,7 @@ def generate(
             ("s", request_id, block_index)
             for block_index in range(suffix_length)
         )
-        blocks = shared_prefix + unique_suffix
+        blocks = universal_prefix + shared_prefix + unique_suffix
 
         output_length = int(
             rng.integers(

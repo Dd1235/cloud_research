@@ -29,3 +29,20 @@ def test_workload_is_seeded_and_has_shared_prefixes():
         )
         assert req.prompt_tokens == 48
         assert req.output_tokens == 5
+
+def test_universal_blocks_begin_every_request_like_a_shared_system_prompt():
+    requests = generate(
+        np.random.default_rng(0),
+        20,
+        rate=1.0,
+        universal_blocks=3,
+        prefix_blocks=2,
+    )
+
+    universal_prefix = (("u", 0), ("u", 1), ("u", 2))
+    for req in requests:
+        assert req.blocks[:3] == universal_prefix
+        # the shared prefix follows the universal one, so every request has
+        # exactly one distinct first block, the trace pathology on demand
+        assert req.blocks[3][0] == "p"
+        assert req.prompt_tokens == len(req.blocks) * 16
