@@ -171,7 +171,11 @@ def fp_versus_age(policy_name, periods, capacities, *, seeds, predict_with, resi
             population=residence_population, **common,
         )
         turnover = residence["turnover_evictions"]
-        residence_cdf = residence["residence_cdf"] if predict_with == "cdf" else None
+        residence_cdf = {
+            "step": None,
+            "cdf": residence["residence_cdf"],
+            "cdf-depth": residence["residence_cdf_by_depth"],
+        }[predict_with]
 
         for period in periods:
             row = median_across_seeds(
@@ -202,7 +206,7 @@ def main():
     parser.add_argument("--requests", type=int, default=3000)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--worker", choices=["sequential", "batched"], default="batched")
-    parser.add_argument("--predict-with", choices=["step", "cdf"], default="cdf", help="che's step at the turnover, or the measured residence cdf (default: cdf)")
+    parser.add_argument("--predict-with", choices=["step", "cdf", "cdf-depth"], default="cdf", help="che's step at the turnover, the measured residence cdf, or the cdf conditioned on the block's depth generation (default: cdf)")
     parser.add_argument("--residence-population", choices=["all", "reused"], default="all", help="whose idle times form the residence cdf: every evicted block, or only blocks re-referenced at least once (default: all)")
     parser.add_argument("--output-prefix", default="out/theory_check")
     args = parser.parse_args()
