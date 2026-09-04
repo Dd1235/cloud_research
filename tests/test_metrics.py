@@ -144,3 +144,34 @@ def test_perfect_view_and_longest_prefix_have_zero_view_error_and_zero_regret():
     # a huge cache never evicts, so nothing promised can disappear before
     # admission either: no drift, no execution false positives
     assert metrics["execution_fp_rate"] == 0.0
+
+
+def test_windowed_series_buckets_by_arrival_and_splits_reuse_per_worker():
+    from sim.metrics import windowed_series
+
+    def make(request_id, arrival, worker_id, cached, first_token):
+        req = Request(id=request_id, arrival=arrival, prompt_tokens=32, output_tokens=1, blocks=())
+        req.worker_id = worker_id
+        req.cached_tokens = cached
+        req.first_token = first_token
+        req.finish = first_token
+        return req
+
+    requests = [
+        # window [0, 10): two requests, 48 of 64 tokens reused, ttft 1 and 3
+        make(1, 0.0, worker_id=0, cached=32, first_token=1.0),
+        make(2, 4.0, worker_id=1, cached=16, first_token=7.0),
+        # window [10, 20): one cold request on worker 1
+        make(3, 12.0, worker_id=1, cached=0, first_token=14.0),
+    ]
+
+    series = windowed_series(requests, window=10.0)
+
+    assert len(series) == 2
+    assert series[0]["n"] == 2
+    assert series[0]["hit_rate"] == pytest.approx(48 / 64)
+    assert series[0]["ttft_p50"] == pytest.approx(2.0)
+    assert series[0]["hit_rate_by_worker"] == {0: pytest.approx(1.0), 1: pytest.approx(0.5)}
+    assert series[0]["share_by_worker"] == {0: pytest.approx(0.5), 1: pytest.approx(0.5)}
+    assert series[1]["hit_rate"] == pytest.approx(0.0)
+    assert series[1]["t"] == pytest.approx(10.0)

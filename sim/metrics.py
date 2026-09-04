@@ -185,3 +185,59 @@ def fmt(row: dict) -> str:
         else f"{key}={value}"
         for key, value in row.items()
     )
+
+def windowed_series(requests, *, window: float) -> list[dict]:
+    """Per-arrival-window time series: what orders arriving then experienced.
+
+    summarize() collapses a run to one row, which is exactly wrong for a
+    scale-out event: the cost of a cold worker is a dip that starts at t0 and
+    heals, and only a time series shows its depth and how long it lasts.
+    Requests are bucketed by arrival, so a window describes the decisions made
+    in it; per-worker reuse in the same rows shows the newcomer warming up.
+    """
+    done = sorted(
+        (req for req in requests if req.done),
+        key=lambda req: req.arrival,
+    )
+    if not done:
+        return []
+
+    series = []
+    start = done[0].arrival
+    index = 0
+
+    while index < len(done):
+        end = start + window
+        bucket = []
+        while index < len(done) and done[index].arrival < end:
+            bucket.append(done[index])
+            index += 1
+
+        if bucket:
+            prompt_tokens = sum(req.prompt_tokens for req in bucket)
+            ttft = np.asarray([req.ttft for req in bucket])
+
+            by_worker = {}
+            for req in bucket:
+                cached, total = by_worker.get(req.worker_id, (0, 0))
+                by_worker[req.worker_id] = (cached + req.cached_tokens, total + req.prompt_tokens)
+
+            series.append({
+                "t": start,
+                "n": len(bucket),
+                "hit_rate": sum(req.cached_tokens for req in bucket) / prompt_tokens,
+                "ttft_p50": float(np.percentile(ttft, 50)),
+                "ttft_p99": float(np.percentile(ttft, 99)),
+                "hit_rate_by_worker": {
+                    worker_id: cached / total
+                    for worker_id, (cached, total) in sorted(by_worker.items())
+                },
+                "share_by_worker": {
+                    worker_id: total / prompt_tokens
+                    for worker_id, (cached, total) in sorted(by_worker.items())
+                },
+            })
+
+        start = end
+
+    return series
