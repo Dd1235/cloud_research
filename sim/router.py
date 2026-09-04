@@ -25,15 +25,40 @@ class Router:
         # survival view reads it, so it is optional
         self.tracker = tracker
 
-        # per worker, so a later herd index can ask who got the burst
-        self.dispatches = [0] * len(workers)
+        # kept for workers that join later: a new worker needs a view built
+        # the same way as everyone else's
+        self._view_factory = view_factory
+
+        # per worker id, so a later herd index can ask who got the burst.
+        # ids are stable across scale-in, so this is a dict, not a list
+        self.dispatches = {worker.id: 0 for worker in workers}
 
         for worker in workers:
-            worker.view = (
-                view_factory(worker)
-                if view_factory is not None
-                else PerfectView(worker.cache, engine)
-            )
+            self._install_view(worker)
+
+    def _install_view(self, worker) -> None:
+        worker.view = (
+            self._view_factory(worker)
+            if self._view_factory is not None
+            else PerfectView(worker.cache, self.engine)
+        )
+
+    def add_worker(self, worker) -> None:
+        """A new worker joins the routing set, cold: its cache and view start
+        as empty as the machine it models. The workers list is mutated in
+        place so anything holding it (the outstanding sampler) sees the new
+        member from its next sample on. Hash-ring policies rebuild on the next
+        choose because the worker count changed; the keys that remap to the
+        new member are the scale-out cost E14 measures."""
+        self._install_view(worker)
+        self.dispatches.setdefault(worker.id, 0)
+        self.workers.append(worker)
+
+    def remove_worker(self, worker_id: int) -> None:
+        """The worker leaves the routing set but keeps running: requests it
+        already holds finish normally, it just receives nothing new. Its
+        dispatch count and its requests stay in the books."""
+        self.workers[:] = [worker for worker in self.workers if worker.id != worker_id]
 
     def dispatch(self, req) -> None:
         chosen = self.policy.choose(req, self.workers)

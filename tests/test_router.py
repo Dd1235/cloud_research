@@ -61,7 +61,7 @@ def test_router_records_estimate_truth_and_best_at_dispatch():
     assert req.true_cached_tokens_at_dispatch == 32
     assert req.best_cached_tokens_at_dispatch == 32
     assert req.cached_tokens == 32
-    assert router.dispatches == [0, 1]
+    assert router.dispatches == {0: 0, 1: 1}
 
 
 def test_estimate_is_capped_by_the_prompt_length():
@@ -224,3 +224,44 @@ def test_block_samples_are_off_by_default():
     router = Router(engine, LongestPrefix(), workers)
 
     assert router.block_samples is None
+
+
+def test_a_worker_added_later_gets_a_view_and_receives_dispatches():
+    engine = Engine(seed=0)
+    workers = build_workers(engine, 2)
+    router = Router(engine, LongestPrefix(), workers)
+
+    # the newcomer is built cold, outside the initial set
+    newcomer = build_workers(engine, 3)[2]
+    assert getattr(newcomer, "view", None) is None or newcomer.view is newcomer.cache
+
+    router.add_worker(newcomer)
+
+    assert len(router.workers) == 3
+    assert newcomer.view.match(("a",)) == 0   # a real view, empty like the cache
+
+    # the newcomer holds the longest prefix, so the ranker can now pick it
+    newcomer.cache.insert(("a", "b"), now=0.0)
+    req = Request(id=1, arrival=0.0, prompt_tokens=48, output_tokens=1, blocks=("a", "b", "c"))
+    router.dispatch(req)
+
+    assert req.worker_id == newcomer.id
+    assert router.dispatches[newcomer.id] == 1
+
+
+def test_a_removed_worker_receives_nothing_new_but_keeps_its_books():
+    engine = Engine(seed=0)
+    workers = build_workers(engine, 3)
+    router = Router(engine, LongestPrefix(), workers)
+
+    # worker 1 is warmest; remove it, and the ranker must settle for worker 2
+    workers[1].cache.insert(("a", "b"), now=0.0)
+    workers[2].cache.insert(("a",), now=0.0)
+    router.remove_worker(1)
+
+    req = Request(id=1, arrival=0.0, prompt_tokens=48, output_tokens=1, blocks=("a", "b"))
+    router.dispatch(req)
+
+    assert req.worker_id == 2
+    assert len(router.workers) == 2
+    assert router.dispatches[1] == 0   # still in the books, just never chosen
