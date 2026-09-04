@@ -364,3 +364,18 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   dualmap hit rate                0.165   0.165   0.165   0.165   0.166   0.165   0.166
   longest prefix hit rate         0.180   0.044   0.044   0.044   0.044   0.044   0.044
   longest prefix ttft p50 (s)     0.60    2017    2017    2017    2017    2017    2017
+
+
+- generational lifetimes, tested and rejected as a model input (4/9/26, E11c): the guess was that one residence cdf is too crude for a radix tree, in the manner of generational gc: shallow blocks (shared beginnings) should live long, deep blocks (unique tails) die young, so condition the survival model's lifetime on depth. depth recorded at eviction, per-depth cdfs in the theory check (`--predict-with cdf-depth`), measured fp binned by depth in fp_by_age. out/fp_by_age.csv
+    - the generations are real, but they live in the eviction *counts*, not the death ages: at 256 blocks, 97% of evictions are depth 9+, 1.5% are depth 1-2 (the eviction log's survivorship bias, now with its census). yet the idle-age-at-death distribution is the same in every generation: p50 9.3 / 8.8 / 8.7s for depths 1-2 / 3-8 / 9+
+    - and measured false positives, already binned by the believed idle age, are depth-flat too: at 5s snapshot period, 2.2% / 2.4% / 2.6% for the three generations; at 0.5s, 0.35% / 0.32% / 0.25%. a shallow block that *is* idle 8s is exactly as much at risk as a deep one idle 8s
+    - so the depth-conditioned prediction matches the aggregate one within noise at every grid point (longest prefix C=256 P=0.5: 0.0048 vs 0.0046) and the falsifier fires: depth is the wrong covariate, and so was reuse-count before it (E11 final). the reason is that lru has one clock. eviction order is idle time, whatever the depth, so the block's last-access age, which the snapshot already carries per block, is the sufficient statistic; depth changes how often a block is *exposed* to long idleness, not what long idleness does to it. the generational structure is real and already priced in
+    - unlike gc, where "collections survived" is the covariate because the collector treats generations differently, an lru cache treats everyone the same and only the workload differs by depth. the model iteration stops here per the plan: the remaining ~2x over-prediction at small ages (absolute error < 0.5 points) is the deaths-only estimator lacking an at-risk denominator (a kaplan-meier-style correction), noted as future work, not pursued
+    - practical consequence, and the answer to "should we pin the system prompt": no mechanism needed. a boilerplate block touched every turn never accumulates idle time, so lru already protects it structurally; the measured exception stands (hybrid's spreading divides the touches per copy, shortening its turnover). the universal-blocks workload knob added next makes that a controlled experiment
+
+-  depth generation (C=256)        1-2     3-8     9+
+  share of evictions             0.015   0.024   0.970  (n = 258 / 822 / 33766)
+  idle at death p50 (s)          9.3     8.8     8.7
+  share of promised blocks       0.063   0.189   0.747
+  measured fp, P=0.5             0.0035  0.0032  0.0025
+  measured fp, P=5               0.0221  0.0235  0.0260
