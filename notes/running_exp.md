@@ -379,3 +379,19 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   share of promised blocks       0.063   0.189   0.747
   measured fp, P=0.5             0.0035  0.0032  0.0025
   measured fp, P=5               0.0221  0.0235  0.0260
+
+
+- lock-in, controlled (4/9/26): the synthetic workload gets `--universal-blocks k` (the same k blocks begin every request, the mooncake shape) and longest prefix gets `--match-threshold` (sglang's rule: best match under this fraction of the prompt routes by load). sweep k ∈ {0,1,4,8} x {pure lpm, lpm threshold 0.5, hybrid, dualmap key-depth 16, dualmap key-depth 1} x {perfect view, shadow}, 4 batched workers, 6 req/s, zipf 0.9, 256 blocks, 2 seeds. scripts/lockin_sweep.py, out/lockin.png/.csv
+    - the headline is written in the script's docstring as a prediction and it held: **pure longest prefix locks in under the perfect view too**, with numbers identical to the shadow run (k=1: hit 0.72 → 0.42, p50 0.22 → 540s, queue cv 1.73). the traces' perfect view escaped only because coarse timestamps tie the first requests (nothing admitted yet → all-zero match → spread by load, every worker learns the prefix). spaced arrivals never tie: the first dispatch is admitted before the second arrival, worker 0 is then strictly warmest for every request forever. so the lock-in is not a stale-view disease and freshness does not save you; it is pure ranking plus a universal prefix, and record-insert only removes the one escape hatch (the in-flight instant). the writeup's "ledger lock-in" framing needs this correction
+    - one universal block is enough, and more barely changes it (k=1/4/8 all p50 ~540s). the collapse is total: one worker takes 6 req/s that four were provisioned for
+    - both cures are complete at every k. threshold 0.5: p50 0.216-0.222s at all k, and hit rate *rises* with k (0.72 → 0.76; universal blocks are free hits wherever the request lands). hybrid: same shape (0.60 → 0.65). the cures do not trade anything away at k=0 either
+    - dualmap with a depth-1 key is byte-identical to pure lpm's collapse (it hashes the universal block: every request one key, both candidates the same two workers, and its cache ranking then picks the warmer → one worker). with a depth-16 key it is healthy except a wobble at k=1 (p50 5.9s, qcv 1.31, both views): prepending one block shifts every key's hash, and by draw the hot prefixes' candidate pairs overlap on one worker. hash-luck variance, not a mechanism; it heals at k=4 and 8
+    - so the ranker clause tightens: a pure ranker needs a threshold (or a load term, or a deep hash cap) on shared-prefix traffic *whatever the view*, and the threshold costs nothing when the traffic is not shared
+
+-  lock-in sweep, perfect view      k=0     k=1     k=4     k=8
+  pure lpm, ttft p50 (s)          0.216   540     543     547
+  lpm threshold .5, p50           0.216   0.216   0.218   0.219
+  lpm threshold .5, hit rate      0.714   0.721   0.741   0.761
+  hybrid, p50                     0.248   0.248   0.248   0.252
+  dualmap depth 16, p50           0.216   5.90    0.240   0.291
+  dualmap depth 1, p50            0.216   540     543     547
