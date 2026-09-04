@@ -93,6 +93,7 @@ def run(
     view_overlay: bool = False,
     kv_available_at: str = "admission",
     workload=None,
+    universal_blocks: int = 0,
     block_size: int = 16,
     c_prefill: float = C_PREFILL,
     c_decode_batched: float = C_DECODE_BATCHED,
@@ -131,6 +132,7 @@ def run(
             n_requests,
             rate,
             zipf_alpha=zipf_alpha,
+            universal_blocks=universal_blocks,
         )
     )
 
