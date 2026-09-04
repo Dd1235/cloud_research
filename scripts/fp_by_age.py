@@ -22,7 +22,7 @@ from sim.router import Router
 from sim.sampler import OutstandingSampler
 from sim.views import make_view_factory
 from sim.workload import generate
-from theory_check import residence_times
+from theory_check import DEPTH_BINS, depth_bin, residence_times
 
 BIN_EDGES = [0.0, 0.5, 1.0, 2.0, 5.0, 8.0, 12.0, 20.0, float("inf")]
 
@@ -90,7 +90,8 @@ def main():
     rows = []
     for period in [float(p) for p in args.periods.split(",")]:
         samples = block_samples(args.policy, seed=0, period=period, cache_blocks=args.cache_blocks, **common)
-        known_ages, view_ages, was_false = samples[:, 0], samples[:, 1], samples[:, 2]
+        known_ages, view_ages, was_false, depths = (samples[:, 0], samples[:, 1], samples[:, 2],
+                                                    samples[:, 3].astype(int))
 
         print(f"\n{args.policy} C={args.cache_blocks} P={period} T_C={turnover:.1f}s: "
               f"{len(samples)} promised blocks, fp overall {was_false.mean():.4f}")
@@ -108,6 +109,28 @@ def main():
             print(f"{label:>18} {in_bin.mean():7.3f} {measured:12.4f} {predicted_cdf:11.4f} {predicted_step:9.4f}")
             rows.append([args.policy, args.cache_blocks, period, low, high, f"{in_bin.mean():.4f}",
                          f"{measured:.5f}", f"{predicted_cdf:.5f}", f"{predicted_step:.5f}"])
+
+        # the same promises cut by generation instead of by believed age: where
+        # along the match do the false promises actually live, and does either
+        # cdf see it? the aggregate cdf gives every depth the same hazard, so a
+        # gap between generations here is exactly what depth conditioning buys
+        residence_cdf_by_depth = residence["residence_cdf_by_depth"]
+        print(f"{'depth':>12} {'share':>7} {'measured fp':>12} {'cdf hazard':>11} {'depth hazard':>13}")
+        for index, (low, high) in enumerate(DEPTH_BINS):
+            in_bin = np.array([depth_bin(depth) == index for depth in depths])
+            if not in_bin.any():
+                continue
+            measured = was_false[in_bin].mean()
+            predicted_all = np.mean([hazard_over_view_age(residence_cdf, x, a)
+                                     for x, a in zip(known_ages[in_bin], view_ages[in_bin])])
+            predicted_depth = np.mean([
+                hazard_over_view_age(lambda idle: residence_cdf_by_depth(idle, depth), x, a)
+                for x, a, depth in zip(known_ages[in_bin], view_ages[in_bin], depths[in_bin])
+            ])
+            label = f"{low}-{high}" if high is not None else f"{low}+"
+            print(f"{label:>12} {in_bin.mean():7.3f} {measured:12.4f} {predicted_all:11.4f} {predicted_depth:13.4f}")
+            rows.append([args.policy, args.cache_blocks, period, f"depth {label}", "", f"{in_bin.mean():.4f}",
+                         f"{measured:.5f}", f"{predicted_all:.5f}", f"{predicted_depth:.5f}"])
 
     with open(args.output, "w", newline="") as handle:
         writer = csv.writer(handle)
