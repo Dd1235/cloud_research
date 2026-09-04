@@ -395,3 +395,17 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   hybrid, p50                     0.248   0.248   0.248   0.252
   dualmap depth 16, p50           0.216   5.90    0.240   0.291
   dualmap depth 1, p50            0.216   540     543     547
+
+
+- cold replica scale-out (4/9/26, E14): a 5th empty batched worker joins 4 warm ones at t=296s (40% into the run), 8 req/s, zipf 0.9, 256 blocks/worker, 6000 requests, 3 seeds, windowed series at 5s (`sim/metrics.windowed_series`). arms: none / naive join / shield (for one T̂_C the newcomer gets only orders whose best veteran match is under 25% of the prompt) / prewarm (joins after 0.25 T̂_C of modeled transfer, holding the hottest trunks of the last turnover, nothing matchable before it arrives). T̂_C measured per policy from the eviction counters: longest prefix 11.1s, hybrid 8.4s (at 6 req/s it was 14.4 / 10.1s: turnover scales inversely with rate, as it should). scripts/scale_out.py, out/scale_out.png/.csv
+    - the theory's prediction holds: a naive join warms in about one turnover (time to reach 90% of the fleet's pre-add hit rate: longest prefix 1.24 T_C, hybrid 1.04 T_C). prewarm warms in 0.34-0.45 T_C, floored by its own 0.25 T_C transfer; it is warm essentially on arrival
+    - the expected *dip* is not there at this operating point. longest prefix: 0.4-1.9 hit·s dip integral against 23-32 hit·s of gain; the windowed deltas vs the no-scale-out run are almost never negative. a ranker does not send matched work to a cold worker, so the newcomer only ever receives orders that were going to miss anywhere (the tie-break), and the fleet's reuse never drops. hybrid's dip integral (21 hit·s) is window noise oscillating around zero with at most 2-3 slightly negative windows right after the join, and no arm changes it (21.0-21.9): what little transient exists is the fleet re-balancing, which prewarming one worker cannot address
+    - shield helps the ranker and hurts the scorer. longest prefix warms in 0.79 T_C shielded (vs 1.24 naive): the concentrated diet of low-affinity work builds its shelf faster. hybrid warms in 1.65 T_C shielded (vs 1.04): its load term was already feeding the newcomer, and the shield only restricts the diet. the cure again depends on the policy family
+    - capacity pays immediately regardless: p99 1.34 → 1.12-1.22s (longest prefix), 1.71 → 1.38s (hybrid) in every join arm
+    - so at simulator scale the autoscaler's warmth budget is real but small: one turnover is ~11s here. the number that transfers is *turnovers*, and the traces' turnover is ~137s, where a minute-plus of half-warm replica is what an autoscaler must plan around. the trace-replay version of this run is next; the falsifier ("shield removes most of the dip") turned out moot because the dip itself is a scorer-side transient, not the headline cost. the cost of a cold replica is the *time to its full value*, not damage to the fleet
+
+-  scale-out, time to warm (T_C)   naive   shield   prewarm
+  longest prefix                  1.24    0.79     0.34
+  hybrid                          1.04    1.65     0.45
+  dip / gain (hit·s), lpm         0.5/28  0.4/32   1.9/23
+  dip / gain (hit·s), hybrid      22/27   22/25    21/24
