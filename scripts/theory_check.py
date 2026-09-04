@@ -73,7 +73,7 @@ def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alp
     idle_before_eviction = np.sort(np.array(
         [evicted_at - last_access
          for worker in workers
-         for _, inserted_at, last_access, evicted_at in worker.cache.residence_log
+         for _, inserted_at, last_access, evicted_at, _ in worker.cache.residence_log
          if in_population(inserted_at, last_access)]
     ))
     logged = sum(len(worker.cache.residence_log) for worker in workers)

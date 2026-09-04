@@ -3,7 +3,7 @@
 # one cached token block
 class _Node:
 
-    __slots__ = ("key", "parent", "children", "last_access", "inserted_at")
+    __slots__ = ("key", "parent", "children", "last_access", "inserted_at", "depth")
 
     def __init__(self, key, parent):
         self.key = key
@@ -11,6 +11,12 @@ class _Node:
         self.children = {}
         self.last_access = 0.0
         self.inserted_at = 0.0
+
+        # edges from the root. a block's position along its prompt, which is
+        # what separates a shared beginning (shallow, long-lived) from a
+        # unique tail (deep, evicted first): the two generations of a radix
+        # cache. fixed at creation, so it costs one addition per new block
+        self.depth = 0 if parent is None else parent.depth + 1
 
 
 class PrefixCache:
@@ -25,8 +31,8 @@ class PrefixCache:
         self.evictions = 0
 
         # how long each evicted block lived: (block, inserted_at, last_access,
-        # evicted_at). opt in, because a long run evicts hundreds of thousands
-        # of blocks and only the theory check wants the distribution
+        # evicted_at, depth). opt in, because a long run evicts hundreds of
+        # thousands of blocks and only the theory check wants the distribution
         self.residence_log = [] if record_residence else None
 
 
@@ -145,7 +151,7 @@ class PrefixCache:
 
             if self.residence_log is not None:
                 self.residence_log.append(
-                    (victim.key, victim.inserted_at, victim.last_access, now),
+                    (victim.key, victim.inserted_at, victim.last_access, now, victim.depth),
                 )
 
             del victim.parent.children[victim.key]

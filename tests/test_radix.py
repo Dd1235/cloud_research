@@ -129,12 +129,12 @@ def test_residence_log_records_how_long_each_evicted_block_lived():
     cache.insert(("b",), now=2.0)
     cache.insert(("c",), now=3.0)   # over capacity: the oldest leaf "a" goes
 
-    assert cache.residence_log == [("a", 1.0, 1.0, 3.0)]
+    assert cache.residence_log == [("a", 1.0, 1.0, 3.0, 1)]
 
     # a refreshed block reports its insertion and its last touch separately
     cache.insert(("b",), now=4.0)
     cache.insert(("d",), now=5.0)   # evicts "c" (last touched 3.0), not "b"
-    assert cache.residence_log[-1] == ("c", 3.0, 3.0, 5.0)
+    assert cache.residence_log[-1] == ("c", 3.0, 3.0, 5.0, 1)
 
 
 def test_residence_log_is_off_by_default():
@@ -144,3 +144,14 @@ def test_residence_log_is_off_by_default():
 
     assert cache.residence_log is None
     assert cache.evictions == 1
+
+
+def test_residence_log_records_the_depth_of_the_evicted_block():
+    cache = PrefixCache(3, record_residence=True)
+
+    # a three-deep path fills the cache; the next insert evicts its leaf,
+    # which sits three edges from the root
+    cache.insert(("a", "b", "c"), now=1.0)
+    cache.insert(("x",), now=2.0)
+
+    assert cache.residence_log == [("c", 1.0, 1.0, 2.0, 3)]
