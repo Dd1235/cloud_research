@@ -24,7 +24,9 @@ POLICIES = {
     SessionHash.name: lambda rng, options: SessionHash(
         key_blocks=options.get("key_blocks", 1),
     ),
-    LongestPrefix.name: lambda rng, options: LongestPrefix(),
+    LongestPrefix.name: lambda rng, options: LongestPrefix(
+        match_threshold=options.get("match_threshold", 0.0),
+    ),
     Hybrid.name: lambda rng, options: Hybrid(
         alpha=1.0,
         beta=1.0,
