@@ -17,8 +17,8 @@ class Router:
         self.workers = workers
 
         # opt-in, for the theory check: one (known block age, view age, was
-        # the promise false) sample per promised block. off by default because
-        # it grows by every matched block of every request
+        # the promise false, depth) sample per promised block. off by default
+        # because it grows by every matched block of every request
         self.block_samples = [] if record_block_samples else None
 
         # per-block reference rates from the router's own dispatches; only the
@@ -83,7 +83,7 @@ class Router:
             if match_with_ages is not None:
                 known_ages = match_with_ages(req.blocks)
                 self.block_samples.extend(
-                    (known_age, chosen.view.age, index >= true_blocks)
+                    (known_age, chosen.view.age, index >= true_blocks, index + 1)
                     for index, known_age in enumerate(known_ages)
                 )
 

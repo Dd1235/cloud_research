@@ -213,8 +213,8 @@ def test_block_samples_carry_the_believed_age_and_whether_the_promise_was_false(
     assert req.estimated_cached_tokens == 32
     assert req.true_cached_tokens_at_dispatch == 0
     assert router.block_samples == [
-        (pytest.approx(2.0), pytest.approx(2.0), True),
-        (pytest.approx(2.0), pytest.approx(2.0), True),
+        (pytest.approx(2.0), pytest.approx(2.0), True, 1),
+        (pytest.approx(2.0), pytest.approx(2.0), True, 2),
     ]
 
 
