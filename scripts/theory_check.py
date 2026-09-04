@@ -36,6 +36,20 @@ from sim.workload import generate
 #      axis, and the survival view's own prediction should sit on the curve
 
 
+# the generations of a radix cache, by edges from the root: the shared
+# beginning of a prompt (shallow), the middle, and the unique tail (deep).
+# leaves are evicted first, so the deep generation should die youngest
+DEPTH_BINS = ((1, 2), (3, 8), (9, None))
+
+
+def depth_bin(depth: int) -> int:
+    for index, (low, high) in enumerate(DEPTH_BINS):
+        if depth >= low and (high is None or depth <= high):
+            return index
+
+    return len(DEPTH_BINS) - 1
+
+
 def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alpha, worker_kind,
                     policy_name="longest_prefix", population="all", workload=None,
                     policy_options=None, prefill_budget=None, **worker_settings):
@@ -70,18 +84,30 @@ def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alp
     def in_population(inserted_at, last_access):
         return population == "all" or last_access > inserted_at
 
-    idle_before_eviction = np.sort(np.array(
-        [evicted_at - last_access
-         for worker in workers
-         for _, inserted_at, last_access, evicted_at, _ in worker.cache.residence_log
-         if in_population(inserted_at, last_access)]
-    ))
+    entries = [
+        (evicted_at - last_access, depth)
+        for worker in workers
+        for _, inserted_at, last_access, evicted_at, depth in worker.cache.residence_log
+        if in_population(inserted_at, last_access)
+    ]
+    idle_before_eviction = np.sort(np.array([idle for idle, _ in entries]))
+    idle_by_bin = [
+        np.sort(np.array([idle for idle, depth in entries if depth_bin(depth) == index]))
+        for index in range(len(DEPTH_BINS))
+    ]
     logged = sum(len(worker.cache.residence_log) for worker in workers)
     if len(idle_before_eviction):
         print(
             f"residence population={population}: {len(idle_before_eviction)} of {logged} evicted blocks, "
             f"idle p10/p50/p90 = {np.percentile(idle_before_eviction, [10, 50, 90]).round(2).tolist()} s"
         )
+        for (low, high), idles in zip(DEPTH_BINS, idle_by_bin):
+            label = f"depth {low}-{high}" if high is not None else f"depth {low}+"
+            if len(idles):
+                print(f"  {label:>11}: {len(idles):>7} evictions, "
+                      f"idle p10/p50/p90 = {np.percentile(idles, [10, 50, 90]).round(2).tolist()} s")
+            else:
+                print(f"  {label:>11}: never evicted")
     else:
         print(f"residence population={population}: nothing was evicted, so nothing is ever gone")
 
@@ -109,11 +135,23 @@ def residence_times(*, seed, n_workers, rate, n_requests, cache_blocks, zipf_alp
 
         return float(np.searchsorted(idle_before_eviction, idle_age, side="right") / len(idle_before_eviction))
 
+    def residence_cdf_by_depth(idle_age, depth):
+        # the same curve, conditioned on the block's generation. a bin with no
+        # evictions means blocks of that depth were never seen dying, and the
+        # honest empirical answer is that none are gone; the printout above
+        # shows the bin counts so an empty bin is never silent
+        idles = idle_by_bin[depth_bin(depth)]
+        if len(idles) == 0:
+            return 0.0
+
+        return float(np.searchsorted(idles, idle_age, side="right") / len(idles))
+
     return dict(
         idle=idle_before_eviction,
         turnover_evictions=turnover_from_evictions(cache_blocks, evictions // n_workers, duration),
         turnover_che=float(np.mean(per_worker_times)),
         residence_cdf=residence_cdf,
+        residence_cdf_by_depth=residence_cdf_by_depth,
     )
 
 
