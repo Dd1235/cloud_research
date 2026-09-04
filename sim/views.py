@@ -1,3 +1,4 @@
+import inspect
 import math
 
 from .radix import PrefixCache
@@ -195,6 +196,27 @@ class TtlView(CacheView):
         return self._inner.age
 
 
+def _with_depth(residence_cdf):
+    """Normalise a residence cdf to the two-argument form (idle_age, depth).
+
+    A cdf measured on all evictions together ignores depth; one measured per
+    generation wants the block's position along the match. Accepting both
+    keeps every earlier caller and calibration file working.
+    """
+    if residence_cdf is None:
+        return None
+
+    try:
+        wants_depth = len(inspect.signature(residence_cdf).parameters) >= 2
+    except (TypeError, ValueError):
+        wants_depth = False
+
+    if wants_depth:
+        return residence_cdf
+
+    return lambda idle_age, depth: residence_cdf(idle_age)
+
+
 class SurvivalView(CacheView):
     """Weight each block the view reports by the chance it is really still there.
 
@@ -231,12 +253,12 @@ class SurvivalView(CacheView):
         self._engine = engine
         self._tracker = tracker
         self.turnover = turnover
-        self._residence_cdf = residence_cdf
+        self._residence_cdf = _with_depth(residence_cdf)
         # the rescue asks whether *this* worker saw the block again, so rates are
         # read per worker when the tracker was fed per worker
         self._worker_id = worker_id
 
-    def gone_if_not_refreshed(self, known_age: float, scrape_age: float) -> float:
+    def gone_if_not_refreshed(self, known_age: float, scrape_age: float, depth: int = 1) -> float:
         """P[evicted by now | the view saw it present scrape_age ago, idle since].
 
         With a residence cdf F this is the hazard over the scrape interval,
@@ -250,20 +272,20 @@ class SurvivalView(CacheView):
         if self._residence_cdf is None:
             return 1.0 if known_age >= self.turnover else 0.0
 
-        gone_by_now = self._residence_cdf(known_age)
+        gone_by_now = self._residence_cdf(known_age, depth)
 
         if scrape_age <= 0.0 or scrape_age == float("inf"):
             return gone_by_now
 
-        survived_to_scrape = 1.0 - self._residence_cdf(known_age - scrape_age)
+        survived_to_scrape = 1.0 - self._residence_cdf(known_age - scrape_age, depth)
         if survived_to_scrape <= 0.0:
             return 1.0
 
         return min(max((gone_by_now - (1.0 - survived_to_scrape)) / survived_to_scrape, 0.0), 1.0)
 
-    def survival(self, block, known_age: float) -> float:
+    def survival(self, block, known_age: float, depth: int = 1) -> float:
         scrape_age = self._inner.age
-        gone = self.gone_if_not_refreshed(known_age, scrape_age)
+        gone = self.gone_if_not_refreshed(known_age, scrape_age, depth)
         if gone == 0.0:
             return 1.0
 
@@ -288,8 +310,11 @@ class SurvivalView(CacheView):
         expected_depth = 0.0
         path_survival = 1.0
 
-        for block, known_age in zip(blocks, self._inner.match_with_ages(blocks)):
-            path_survival = min(path_survival, self.survival(block, known_age))
+        for position, (block, known_age) in enumerate(zip(blocks, self._inner.match_with_ages(blocks))):
+            # the first matched block sits one edge from the root, so its
+            # depth, the generation the residence cdf may condition on, is
+            # position + 1
+            path_survival = min(path_survival, self.survival(block, known_age, position + 1))
             expected_depth += path_survival
 
         return expected_depth

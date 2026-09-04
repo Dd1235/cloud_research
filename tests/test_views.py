@@ -359,3 +359,31 @@ def test_snapshot_overlay_sees_the_routers_own_dispatches_until_the_next_refresh
     assert overlaid.refreshes == 2
     assert overlaid.match(("a", "b")) == 2
     assert overlaid.match(("z",)) == 0
+
+
+def test_survival_view_conditions_on_depth_when_the_residence_cdf_asks_for_it():
+    from sim.blockrates import BlockRateTracker
+    from sim.views import PerfectView, SurvivalView
+
+    engine = Engine(seed=0)
+    worker = build_worker(engine)
+    worker.cache.insert(("a", "b"), now=0.0)
+    tracker = BlockRateTracker(window=100.0)     # nothing observed: no rescue
+    engine.now = 6.0
+
+    # a generational cache: shallow blocks never die, deep blocks are half
+    # gone by six seconds of idleness
+    def residence_cdf(idle_age, depth):
+        if depth <= 1:
+            return 0.0
+
+        return min(idle_age / 12.0, 1.0)
+
+    view = SurvivalView(PerfectView(worker.cache, engine), engine, tracker, turnover=14.0,
+                        residence_cdf=residence_cdf)
+
+    # a survives for sure (depth 1); b is gone with probability 0.5 (depth 2,
+    # perfect view: no scrape interval, so the cdf applies outright)
+    assert view.survival("a", 6.0, depth=1) == pytest.approx(1.0)
+    assert view.survival("b", 6.0, depth=2) == pytest.approx(0.5)
+    assert view.match_expected(("a", "b")) == pytest.approx(1.5)
