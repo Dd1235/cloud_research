@@ -17,7 +17,10 @@ class OutstandingSampler:
         self._workers = workers
         self._interval = interval
 
-        # (time, [outstanding per worker]) per tick
+        # (time, {worker id: outstanding}) per tick. keyed by id, not by
+        # position: the workers list can gain and lose members mid-run
+        # (scale-out and scale-in), and a positional row would silently
+        # misattribute counts the moment the composition changes
         self.samples = []
 
         engine.schedule(0.0, self._sample, daemon=True)
@@ -26,14 +29,20 @@ class OutstandingSampler:
         self.samples.append(
             (
                 self._engine.now,
-                [worker.outstanding for worker in self._workers],
+                {worker.id: worker.outstanding for worker in self._workers},
             )
         )
 
         self._engine.schedule(self._interval, self._sample, daemon=True)
 
     def mean_outstanding(self, since: float = 0.0) -> list[float]:
-        """Per worker time average of the outstanding count, from `since` on."""
+        """Per worker time average of the outstanding count, from `since` on.
+
+        A worker absent from a tick (not yet added, or already removed) is
+        counted as holding nothing then: its average is over the whole window,
+        so a latecomer's idle prehistory shows as a low mean, which is what a
+        fleet-imbalance number should say about a worker that was not there.
+        """
         counted = [
             outstanding
             for sampled_at, outstanding in self.samples
@@ -43,7 +52,9 @@ class OutstandingSampler:
         if not counted:
             return [0.0 for _ in self._workers]
 
+        worker_ids = sorted({worker_id for per_tick in counted for worker_id in per_tick})
+
         return [
-            sum(per_tick[worker_index] for per_tick in counted) / len(counted)
-            for worker_index in range(len(self._workers))
+            sum(per_tick.get(worker_id, 0) for per_tick in counted) / len(counted)
+            for worker_id in worker_ids
         ]
