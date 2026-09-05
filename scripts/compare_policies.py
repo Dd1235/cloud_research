@@ -12,7 +12,7 @@ from sim.sampler import OutstandingSampler
 from sim.traces import MOONCAKE_BLOCK_SIZE, load_mooncake
 from sim.views import make_view_factory
 from sim.workers import Worker
-from sim.workload import generate
+from sim.workload import generate, generate_sessions
 
 
 # The policy rng is offset from the workload rng so that switching policy does
@@ -248,6 +248,24 @@ def resolve_policy_names(requested: str) -> list[str]:
     return names
 
 
+def session_workload(*, session_rate, n_requests, universal_blocks, mean_turns,
+                     think_time_p50, think_time_sigma):
+    """A workload factory for the session generator, one fresh stream per seed.
+
+    The nonstationary counterpart of the zipf generator: reuse lives in
+    per-session trunks that are born, grow and die, so a stale view cannot
+    coast on a hot set that never moves."""
+    return lambda seed: generate_sessions(
+        np.random.default_rng(seed),
+        n_requests,
+        session_rate,
+        universal_blocks=universal_blocks,
+        mean_turns=mean_turns,
+        think_time_p50=think_time_p50,
+        think_time_sigma=think_time_sigma,
+    )
+
+
 def trace_workload(path: str, *, speedup: float, limit: int | None):
     """A workload factory that replays a Mooncake trace, reloaded per run.
 
@@ -347,6 +365,42 @@ if __name__ == "__main__":
         help="shadow view only: capacity of the router's own index (default: cache blocks)",
     )
     parser.add_argument(
+        "--workload",
+        choices=["zipf", "sessions"],
+        default="zipf",
+        help="synthetic workload family (default: zipf); ignored when --trace is given",
+    )
+    parser.add_argument(
+        "--session-rate",
+        type=float,
+        default=0.75,
+        help="sessions per second for --workload sessions (default: 0.75)",
+    )
+    parser.add_argument(
+        "--mean-turns",
+        type=float,
+        default=8.0,
+        help="mean turns per session (default: 8)",
+    )
+    parser.add_argument(
+        "--think-p50",
+        type=float,
+        default=20.0,
+        help="median think time between turns in seconds (default: 20)",
+    )
+    parser.add_argument(
+        "--think-sigma",
+        type=float,
+        default=1.0,
+        help="lognormal sigma of the think time (default: 1.0)",
+    )
+    parser.add_argument(
+        "--universal-session-blocks",
+        type=int,
+        default=2,
+        help="universal prefix length for --workload sessions (default: 2)",
+    )
+    parser.add_argument(
         "--trace",
         default=None,
         help="replay a mooncake jsonl trace instead of the synthetic workload; --rate and --zipf are then ignored",
@@ -413,6 +467,20 @@ if __name__ == "__main__":
         workload = trace_workload(args.trace, speedup=args.speedup, limit=args.requests)
         block_size = MOONCAKE_BLOCK_SIZE
         print(f"replaying {args.trace} (first {args.requests} requests, speedup {args.speedup}); --rate and --zipf ignored")
+    elif args.workload == "sessions":
+        workload = session_workload(
+            session_rate=args.session_rate,
+            n_requests=args.requests,
+            universal_blocks=args.universal_session_blocks,
+            mean_turns=args.mean_turns,
+            think_time_p50=args.think_p50,
+            think_time_sigma=args.think_sigma,
+        )
+        sample = workload(0)
+        print(
+            f"session workload: {len(sample)} requests over {sample[-1].arrival:.0f}s "
+            f"= {len(sample) / sample[-1].arrival:.2f} req/s; --rate and --zipf ignored"
+        )
 
     main(
         resolve_policy_names(args.policies),

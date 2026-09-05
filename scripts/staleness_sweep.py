@@ -15,6 +15,7 @@ from compare_policies import (
     resolve_policy_names,
     run,
     trace_workload,
+    session_workload,
 )
 from sim.traces import MOONCAKE_BLOCK_SIZE, load_mooncake
 
@@ -401,6 +402,12 @@ def main():
     parser.add_argument("--worker", choices=["sequential", "batched"], default="batched", help="worker model (default: batched)")
     parser.add_argument("--prefill-budget", type=int, default=0, help="batched worker prompt tokens per iteration, 0 unchunked (default: 0)")
     parser.add_argument("--output-prefix", default="out/staleness", help="figure and csv prefix (default: out/staleness)")
+    parser.add_argument("--sessions", action="store_true", help="use the session-structured workload instead of zipf; --zipf and --rate are ignored")
+    parser.add_argument("--session-rate", type=float, default=0.75)
+    parser.add_argument("--mean-turns", type=float, default=8.0)
+    parser.add_argument("--think-p50", type=float, default=20.0)
+    parser.add_argument("--think-sigma", type=float, default=1.0)
+    parser.add_argument("--universal-session-blocks", type=int, default=2)
     parser.add_argument("--trace", default=None, help="replay a mooncake jsonl trace instead of the synthetic workload; zipf, rate and the scaling figure are then not applicable")
     parser.add_argument("--speedup", type=float, default=1.0, help="trace only: compress arrival gaps by this factor (default: 1.0)")
     parser.add_argument("--c-prefill", type=float, default=C_PREFILL, help=f"seconds per uncached prompt token (default: {C_PREFILL})")
@@ -436,6 +443,28 @@ def main():
 
     rate = args.rate
     seeds = args.seeds
+
+    if args.sessions:
+        # the nonstationary workload: per-session trunks are born, grow and
+        # die, so the hot set moves. zipf's stationary hot set flatters a
+        # stale view; this is the honest version of the same sweep
+        factory = session_workload(
+            session_rate=args.session_rate,
+            n_requests=args.requests,
+            universal_blocks=args.universal_session_blocks,
+            mean_turns=args.mean_turns,
+            think_time_p50=args.think_p50,
+            think_time_sigma=args.think_sigma,
+        )
+        sample = factory(0)
+        rate = len(sample) / sample[-1].arrival
+        zipfs = [float("nan")]
+        common.update(workload=factory)
+        args.output_prefix = f"{args.output_prefix}_sessions"
+        print(
+            f"session workload: {len(sample)} requests over {sample[-1].arrival:.0f}s "
+            f"= {rate:.2f} req/s (rate used for turnover bookkeeping only)"
+        )
 
     if args.trace is not None:
         # the trace fixes the arrival process, so its own rate is what the
@@ -486,8 +515,9 @@ def main():
         path=f"{args.output_prefix}_sweep.png",
     )
 
-    if args.trace is not None:
-        # arrival rate is not a knob on a trace, so there is no scaling figure
+    if args.trace is not None or args.sessions:
+        # arrival rate is not a free knob on a trace or a session stream, so
+        # there is no scaling figure
         return
 
     # the scaling figure: same policies, the first zipf, two rates

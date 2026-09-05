@@ -25,7 +25,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
-from compare_policies import median_across_seeds, run
+from compare_policies import median_across_seeds, run, session_workload
 
 # label -> (policy, options). dualmap with a one-block session key hashes the
 # universal prefix itself, the exact first-block mistake from the traces
@@ -49,8 +49,13 @@ def main():
     parser.add_argument("--requests", type=int, default=3000)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--cache-blocks", type=int, default=256)
+    parser.add_argument("--sessions", action="store_true", help="run the sweep on the session workload; the universal axis becomes generate_sessions' universal_blocks")
+    parser.add_argument("--session-rate", type=float, default=0.75)
     parser.add_argument("--output-prefix", default="out/lockin")
     args = parser.parse_args()
+
+    if args.sessions:
+        args.output_prefix = f"{args.output_prefix}_sessions"
 
     universal_counts = [int(k) for k in args.universal.split(",")]
     os.makedirs("out", exist_ok=True)
@@ -59,6 +64,20 @@ def main():
     for view_kind in VIEWS:
         for label, (policy_name, options) in CONFIGS.items():
             for universal_blocks in universal_counts:
+                # under sessions the universal axis is the generator's own
+                # universal prefix; the trunks supply the per-session reuse
+                workload = (
+                    session_workload(
+                        session_rate=args.session_rate,
+                        n_requests=args.requests,
+                        universal_blocks=universal_blocks,
+                        mean_turns=8.0,
+                        think_time_p50=20.0,
+                        think_time_sigma=1.0,
+                    )
+                    if args.sessions
+                    else None
+                )
                 row = median_across_seeds([
                     run(
                         policy_name,
@@ -72,6 +91,7 @@ def main():
                         view_kind=view_kind,
                         shadow_blocks=args.cache_blocks,
                         universal_blocks=universal_blocks,
+                        workload=workload,
                         policy_options=options,
                     )
                     for seed in range(args.seeds)
