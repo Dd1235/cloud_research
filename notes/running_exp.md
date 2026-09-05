@@ -452,3 +452,17 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   longest prefix, busiest        0.404|6.8   0.419|5.9   0.398|6.3
   hybrid, any victim             0.422|5.2   0.43|5.4    0.42|5.5
   dualmap, busiest               0.419|5.4   0.404|6.7   0.399|5.4
+
+
+- shadow capacity ablation on the toolagent trace (5/9/26, C5 trace leg): the oversized record-insert experiment replayed on the trace: shadow index at Ĉ = 1024 / 2048 / 4096 against 1024-block caches, plus ttl at the 137s turnover on the 4x shadow, five policies, one seed, uncalibrated costs. logged numbers below; no separate figure
+    - the scorers do not collapse here: hybrid 0.421 / 0.417 / 0.421 across 1x / 2x / 4x (perfect view 0.418); lmetric 0.425 → 0.423 (0.421); dynamo cost 0.378 → 0.380 (0.381). ttl changes nothing (± half a point). the synthetic ablation's collapse (hybrid 0.607 → 0.467 at 4x) does not reproduce
+    - the mechanism, and it sharpens the claim rather than killing it: a cardinal scorer is a *difference* of per-worker values, so a lie that inflates every worker equally cancels. on this trace almost all overlap is the universal tool prompt, which is alive on every worker, so the 4x shadow's ghost promises are common-mode and harmless. on the synthetic zipf workload each worker's overlap came from *different* hot prefixes, so ghost inflation was worker-differential and corrupted the ordering of scores. the ordinal/cardinal collapse requires worker-differential staleness; universal-prefix traffic protects scorers for the same reason it dooms pure rankers (lock-in feeds on the common mode, scoring is immune to it)
+    - longest prefix sits at 0.329 / p99 1546s at every shadow size including matched: that is the lock-in, not overgrowth, as established
+    - claim C5 is rescoped in notes/methodology.md: "an oversized record-insert view collapses cardinal scorers *in proportion to how worker-differential the promised overlap is*", with the synthetic run as the controlled demonstration and this run as the boundary condition. the session workload run (R3), whose trunks are per-session and therefore differential, is the discriminating middle case: predict a real but partial collapse there
+
+-  toolagent shadow ablation, hit rate   Ĉ=C     2C      4C     4C+ttl   perfect
+  hybrid                               0.421   0.417   0.421   0.417    0.418
+  lmetric                              0.425   0.423   0.423   0.420    0.421
+  dynamo cost                          0.378   0.378   0.380   0.383    0.381
+  dualmap                              0.414   0.413   0.412   0.414    0.412
+  longest prefix (lock-in)             0.329   0.329   0.329   0.329    0.408
