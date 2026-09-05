@@ -502,3 +502,29 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   longest prefix                 .718/.723/.723   .693/.697/.691   .656/.645/.662
   hybrid                         .569/.597/.660   .535/.566/.644   .502/.539/.646
   dualmap                        .721/.722/.722   .709/.709/.715   .692/.697/.703
+
+
+- staleness under the session workload (5/9/26, R3): the staleness sweep on the nonstationary generator (3000 requests, 1.70 req/s effective, universal 2 blocks, think p50 20s, depth-4 keys, 256-block caches, 3 seeds), with chwbl in the lineup for the first time. turnovers 14-19s. out/staleness_sessions_sweep.png/.csv
+    - the thesis survives nonstationarity: no policy crosses below blind (0.12) at any age. and the predicted steeper slope is there: hybrid's view fp reaches 0.100 at 0.85 turnovers of age (~12%/turnover against ~7%/turnover on zipf), dualmap 0.134 (deep keys promise mortal trunk blocks, the coldest possible promises). churn raises the cold share, the slope is the cold share, and the theory priced its own degradation correctly
+    - the striking new fact: **staleness breaks the lock-in**. pure longest prefix is locked at every fresh-ish view (hit 0.090, p50 ~420s, qcv 1.73 at P <= 2s and under the shadow) and then *recovers at P >= 5s* (hit 0.230, p99 7.4s, qcv 0.58): a photo older than the burst spacing keeps showing ties and spreads what a fresh view would funnel. "staleness helps pure affinity" in its extreme form: the stale photo acts as an accidental match threshold. a cursed cure (the deliberate threshold is strictly better: 0.24-0.35 at fresh views), but mechanistically perfect as a demonstration that the lock-in feeds on information, not on its absence
+    - chwbl, which never reads a view, sits flat at 0.254 across every period and the shadow: a staleness-immune control that beats blind by 13 points on hit rate with qcv 0.26. the price is a fixed ceiling (dualmap's view-reading second choice buys it 0.314)
+    - shadow ≈ perfect for the scorers and hash policies here (hybrid 0.249 vs 0.248), consistent with the overgrowth scoping: mortal trunks make record-insert ghosts inert
+
+-  sessions staleness, hit rate     P=0     0.5      1       2       5      10      30   shadow
+  longest prefix (locked)         0.090   0.091   0.091   0.091   0.230   0.204   0.195  0.090
+  hybrid                          0.248   0.252   0.253   0.250   0.239   0.239   0.220  0.249
+  dualmap (depth 4)               0.314   0.314   0.305   0.309   0.301   0.293   0.275  0.312
+  chwbl (never reads the view)    0.254   0.254   0.254   0.254   0.254   0.254   0.254  0.254
+  p2c / round robin               0.124 / 0.119
+
+
+- lock-in under the session workload (5/9/26, R3): the lock-in sweep with the universal axis driven through generate_sessions (universal 0/1/4/8 blocks, 3000 requests, 2 seeds, perfect and shadow views). out/lockin_sessions.png/.csv
+    - third workload family, same law: at u=0 nothing locks (pure lpm 0.242, p99 2.7s); at u >= 1 pure lpm and depth-1 dualmap collapse identically under the perfect view and the shadow (p50 420s, qcv 1.73), and the threshold ranker, hybrid, and depth-16 dualmap are immune with hit rates *rising* in u (threshold 0.237 -> 0.348: universal blocks are free hits wherever the order lands)
+    - the locked worker's hit rate also rises with u (0.070 -> 0.192) because the one warm worker at least reuses the boilerplate; the fleet is still down 4x on latency. lock-in is a latency catastrophe before it is a hit-rate one
+
+-  sessions lock-in, perfect view   u=0     u=1     u=4     u=8
+  pure lpm, p50 (s)               0.58    420     420     421
+  lpm threshold .5, hit           0.237   0.254   0.299   0.348
+  hybrid, hit                     0.210   0.229   0.267   0.316
+  dualmap depth 16, hit           0.254   0.274   0.315   0.356
+  dualmap depth 1, p50 (s)        0.62    420     420     421
