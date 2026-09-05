@@ -184,6 +184,54 @@ def median_across_seeds(rows: list[dict]) -> dict:
     }
 
 
+def seed_statistics(rows: list[dict], rng=None, n_resamples: int = 2000) -> dict:
+    """Per-key median, mean, and a bootstrap CI for the mean across seeds.
+
+    The CI is a 95% percentile bootstrap: resample the per-seed values with
+    replacement n_resamples times, take the mean of each resample, and read
+    off the 2.5th/97.5th percentiles. rng defaults to a fixed seed rather than
+    the module-level numpy state so that a sweep's reported CIs do not change
+    from one run of the script to the next.
+    """
+    if rng is None:
+        rng = np.random.default_rng(0)
+
+    stats = {}
+
+    for key in rows[0]:
+        if not isinstance(rows[0][key], float):
+            stats[key] = rows[0][key]
+            continue
+
+        values = np.array([row[key] for row in rows])
+        median = float(np.median(values))
+        mean = float(np.mean(values))
+
+        # a single seed has nothing to resample, so the interval collapses to
+        # the point estimate instead of the resampling loop below dividing by
+        # a degenerate distribution
+        if len(values) == 1:
+            stats[key] = {
+                "median": median,
+                "mean": mean,
+                "ci_low": mean,
+                "ci_high": mean,
+            }
+            continue
+
+        resampled = rng.choice(values, size=(n_resamples, len(values)), replace=True)
+        resample_means = resampled.mean(axis=1)
+
+        stats[key] = {
+            "median": median,
+            "mean": mean,
+            "ci_low": float(np.percentile(resample_means, 2.5)),
+            "ci_high": float(np.percentile(resample_means, 97.5)),
+        }
+
+    return stats
+
+
 def resolve_policy_names(requested: str) -> list[str]:
     if requested == "all":
         return list(POLICIES)
