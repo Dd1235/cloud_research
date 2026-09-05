@@ -491,3 +491,14 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   dynamo cost                     0.226     0.226     0.236    2.81 -> 2.87
   dualmap (depth 4)               0.314     0.312     0.310    3.74 -> 4.64
   longest prefix (lock-in)        0.090     0.090     0.090    1034 at every view
+
+
+- cost sensitivity of the staleness results (5/9/26, R5): the zipf staleness sweep at all worker costs x0.5 and x2 (c_prefill 0.5/2ms, c_decode 1/4ms per step), 3 seeds, against the base run. out/staleness_cost_half_sweep.png/.csv, out/staleness_cost_double_sweep.png/.csv
+    - the pass criterion holds: no ordering flips (dualmap >= longest prefix > hybrid at every cost and every period), no crossover below blind anywhere, turnovers essentially unchanged (14.7-15.2s for the rankers), and the fp-vs-age shape intact. the staleness claims are not artifacts of the invented constants
+    - the informative exception: hybrid's *absolute* level moves with cost (fresh-view hit 0.569 / 0.597 / 0.660 at x0.5 / x1 / x2) while the rankers sit still. the reason is units: hybrid's score is overlap minus queue length with fixed weights, and rescaling the hardware rescales the queue term but not the token term, shifting the balance point. an ordinal policy has no units to mismatch. this is one more face of the cardinal fragility, and it means any deployed weighted scorer is implicitly calibrated to its hardware generation: the mac calibration will move hybrid's numbers and not the rankers'
+    - one out-of-pattern cell (longest prefix, P=10, x2: 0.622 with fp 0.096, non-monotonic against P=30's 0.662) looks like a queueing-regime wobble at the slower service rate; noted, not chased
+
+-  hit rate, cost x0.5 / x1 / x2      P=0              P=5              P=30
+  longest prefix                 .718/.723/.723   .693/.697/.691   .656/.645/.662
+  hybrid                         .569/.597/.660   .535/.566/.644   .502/.539/.646
+  dualmap                        .721/.722/.722   .709/.709/.715   .692/.697/.703
