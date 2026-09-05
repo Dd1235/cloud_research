@@ -439,3 +439,16 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   longest prefix                  never chosen    1.34            0.46
   dualmap                         0.17            1.77            0.17
   p99 (s, baseline 6.1-6.6)       5.9-6.6         ~110 (all)      5.9-6.2
+
+
+- scale-in on the toolagent trace (5/9/26, E15 trace leg): one of 8 workers leaves at t=496s, victim = coldest / random / busiest, same uncalibrated trace setup, one seed, 20s windows averaged over [t, t+2T_C) and after. out/scale_in_{coldest,random,busiest}_toolagent.png/.csv
+    - the victim rule does not matter here: every cell sits within ±2 points of the pre-removal hit rate (0.40-0.44) and within the trace's p99 noise band (5.2-6.8s), for every policy. some transients are *better* than pre because the leaving worker drains its queue while receiving nothing new
+    - why the synthetic finding did not reproduce, and why that is the finding: the synthetic run cut 4 → 3 workers (a third of capacity) near the knee; this cuts 8 → 7 (an eighth) on a fleet that was never capacity-stressed at 6 req/s. and the "miss absorber" specialisation that made the coldest worker load-bearing under synthetic zipf does not form on this trace: the universal tool prompt keeps every worker warm for the shared trunk, and the depth-16 keys spread sessions symmetrically. specialisation needs skew and pressure; remove either and any member is cheap to remove
+    - so C7 is demoted as planned: "which worker to remove" is a near-knee, high-skew concern (measured synthetically), and at moderate utilisation scale-in choice is free. the actionable rule survives in conditional form: check utilisation before caring, and if near the knee under pure affinity, do not remove the miss absorber
+    - dualmap's naive full-ring-rebuild caveat from the synthetic run still applies; at this load even a 2/3-key remap is absorbed without a visible dip (hit 0.419 → 0.404 worst window)
+
+-  toolagent scale-in (hit | p99)   pre        0-2T_C       later
+  longest prefix, coldest        0.404|6.8   0.420|5.9   0.396|6.1
+  longest prefix, busiest        0.404|6.8   0.419|5.9   0.398|6.3
+  hybrid, any victim             0.422|5.2   0.43|5.4    0.42|5.5
+  dualmap, busiest               0.419|5.4   0.404|6.7   0.399|5.4
