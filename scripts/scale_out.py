@@ -30,7 +30,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from compare_policies import POLICY_SEED_OFFSET, build_workers
+from compare_policies import POLICY_SEED_OFFSET, build_workers, trace_workload
+from sim.traces import MOONCAKE_BLOCK_SIZE
 from sim.engine import Engine
 from sim.metrics import summarize, windowed_series
 from sim.policies import make_policy
@@ -101,17 +102,17 @@ def hot_trunks(requests, *, before: float, window: float, min_count: int, budget
     return paths
 
 
-def run_arm(arm, *, seed, policy_name, n_workers, rate, n_requests, cache_blocks, zipf_alpha,
-            universal_blocks, add_at, shield_turnovers, shield_threshold, prewarm_transfer_turnovers,
-            prewarm_min_count, turnover, remove_at=None, remove_which=None, worker_settings=None):
+def run_arm(arm, *, seed, policy_name, n_workers, cache_blocks, requests_for, policy_options,
+            add_at, shield_turnovers, shield_threshold, prewarm_transfer_turnovers,
+            prewarm_min_count, turnover, prefill_budget=None, remove_at=None, remove_which=None,
+            worker_settings=None):
     engine = Engine(seed)
-    workers = build_workers(engine, "batched", n_workers + 1, cache_blocks, None,
+    workers = build_workers(engine, "batched", n_workers + 1, cache_blocks, prefill_budget,
                             **(worker_settings or {}))
     veterans, newcomer = workers[:n_workers], workers[n_workers]
 
-    policy = make_policy(policy_name, np.random.default_rng(seed + POLICY_SEED_OFFSET))
-    requests = generate(np.random.default_rng(seed), n_requests, rate, zipf_alpha=zipf_alpha,
-                        universal_blocks=universal_blocks)
+    policy = make_policy(policy_name, np.random.default_rng(seed + POLICY_SEED_OFFSET), policy_options)
+    requests = requests_for(seed)
     span = requests[-1].arrival
     t_add = add_at * span
 
@@ -163,13 +164,14 @@ def run_arm(arm, *, seed, policy_name, n_workers, rate, n_requests, cache_blocks
     )
 
 
-def measure_turnover(*, seed, policy_name, n_workers, cache_blocks, worker_settings=None, **workload):
+def measure_turnover(*, seed, policy_name, n_workers, cache_blocks, requests_for, policy_options,
+                     prefill_budget=None, worker_settings=None):
     """One plain run to read the per-worker cache turnover off the eviction counters."""
     engine = Engine(seed)
-    workers = build_workers(engine, "batched", n_workers, cache_blocks, None, **(worker_settings or {}))
-    policy = make_policy(policy_name, np.random.default_rng(seed + POLICY_SEED_OFFSET))
-    requests = generate(np.random.default_rng(seed), workload["n_requests"], workload["rate"],
-                        zipf_alpha=workload["zipf_alpha"], universal_blocks=workload["universal_blocks"])
+    workers = build_workers(engine, "batched", n_workers, cache_blocks, prefill_budget,
+                            **(worker_settings or {}))
+    policy = make_policy(policy_name, np.random.default_rng(seed + POLICY_SEED_OFFSET), policy_options)
+    requests = requests_for(seed)
     router = Router(engine, policy, workers)
     router.replay(requests)
     engine.run()
@@ -201,18 +203,47 @@ def main():
     parser.add_argument("--prewarm-min-count", type=int, default=3)
     parser.add_argument("--remove-at", type=float, default=None, help="scale-in instant as a fraction; enables E15")
     parser.add_argument("--remove-which", choices=["coldest", "random", "busiest"], default="coldest")
+    parser.add_argument("--trace", default=None, help="replay a mooncake jsonl trace instead of the synthetic workload")
+    parser.add_argument("--session-depth", type=int, default=1)
+    parser.add_argument("--prefill-budget", type=int, default=0)
+    parser.add_argument("--c-prefill", type=float, default=None)
+    parser.add_argument("--c-decode", type=float, default=None)
+    parser.add_argument("--max-batch", type=int, default=None)
     parser.add_argument("--output-prefix", default="out/scale_out")
     args = parser.parse_args()
 
     os.makedirs("out", exist_ok=True)
     arms = args.arms.split(",")
-    workload = dict(rate=args.rate, n_requests=args.requests, zipf_alpha=args.zipf,
-                    universal_blocks=args.universal_blocks)
+
+    worker_settings = {}
+    if args.trace is not None:
+        requests_for = trace_workload(args.trace, speedup=1.0, limit=args.requests)
+        worker_settings["block_size"] = MOONCAKE_BLOCK_SIZE
+        trace_stem = os.path.splitext(os.path.basename(args.trace))[0].replace("_trace", "")
+        args.output_prefix = f"{args.output_prefix}_{trace_stem}"
+        args.seeds = 1   # a trace is deterministic for these policies
+    else:
+        requests_for = lambda seed: generate(
+            np.random.default_rng(seed), args.requests, args.rate,
+            zipf_alpha=args.zipf, universal_blocks=args.universal_blocks,
+        )
+    if args.c_prefill is not None:
+        worker_settings["c_prefill"] = args.c_prefill
+    if args.c_decode is not None:
+        worker_settings["c_decode_batched"] = args.c_decode
+    if args.max_batch is not None:
+        worker_settings["max_batch"] = args.max_batch
+
+    policy_options = {"key_blocks": args.session_depth}
+    common = dict(
+        n_workers=args.workers, cache_blocks=args.cache_blocks, requests_for=requests_for,
+        policy_options=policy_options, prefill_budget=args.prefill_budget or None,
+        worker_settings=worker_settings,
+    )
 
     rows = []
     for policy_name in args.policies.split(","):
-        turnover = measure_turnover(seed=0, policy_name=policy_name, n_workers=args.workers,
-                                    cache_blocks=args.cache_blocks, **workload)
+        turnover = measure_turnover(seed=0, policy_name=policy_name, **common)
         print(f"{policy_name}: measured turnover {turnover:.1f}s "
               f"(shield {args.shield_turnovers * turnover:.0f}s, "
               f"prewarm transfer {args.prewarm_transfer_turnovers * turnover:.0f}s)")
@@ -220,12 +251,11 @@ def main():
         for arm in arms:
             for seed in range(args.seeds):
                 result = run_arm(
-                    arm, seed=seed, policy_name=policy_name, n_workers=args.workers,
-                    cache_blocks=args.cache_blocks, add_at=args.add_at,
+                    arm, seed=seed, policy_name=policy_name, add_at=args.add_at,
                     shield_turnovers=args.shield_turnovers, shield_threshold=args.shield_threshold,
                     prewarm_transfer_turnovers=args.prewarm_transfer_turnovers,
                     prewarm_min_count=args.prewarm_min_count, turnover=turnover,
-                    remove_at=args.remove_at, remove_which=args.remove_which, **workload,
+                    remove_at=args.remove_at, remove_which=args.remove_which, **common,
                 )
                 newcomer_id = result["newcomer_id"]
                 for point in windowed_series(result["requests"], window=args.window):
