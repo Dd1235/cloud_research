@@ -476,3 +476,18 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
     - sessions lock-in (universal 0/1/4/8): reproduces at k>=1 under the perfect view (the 300-request smoke already shows 0.652 -> 0.418); threshold and load term cure it; dualmap depth-1 collapses, depth-16 does not
     - sessions shadow overgrowth (4x): *partial* scorer collapse, between zipf's full collapse and toolagent's null, because session trunks are worker-differential but the universal prefix is common-mode. this is the discriminating case for the rescoped C5
     - cost sensitivity (all worker costs x0.5 and x2 on the zipf staleness sweep): policy orderings and the age/turnover law unchanged; only absolute latencies and the saturation knee move. if an ordering flips with costs, the affected claim is latency-coupled and gets flagged in the register
+
+
+- shadow overgrowth under the session workload (5/9/26, the C5 discriminator): perfect view vs matched shadow vs 4x shadow, five policies, 3000 session-generated requests (universal 2 blocks, depth-4 keys), 3 seeds, 256-block caches. logged table below
+    - the "partial collapse" prediction was wrong: no scorer collapses here either. hybrid 0.248 / 0.249 / 0.257 across perfect / matched / 4x; lmetric 0.299 / 0.294 / 0.288 (one point, the largest move); dynamo 0.226 / 0.226 / 0.236; dualmap flat. only the tails pay slightly at 4x (lmetric p99 2.9 -> 4.3s)
+    - the reason is better than the prediction, and it completes the boundary conditions for record-insert overgrowth. a ghost (a block the worker evicted but the oversized shadow still promises) can only distort a decision if a *future request matches it*. session trunks die with their session: after the last turn, no request will ever match those blocks again, so the shadow's differential ghosts are unmatchable and inert. the universal prefix is matchable forever but common-mode, and a score difference cancels it. so overgrowth collapse requires ghosts that are both worker-differential *and* persistently re-requested: a stationary, differentiated hot set
+    - which is exactly what the zipf generator is, and exactly what a multi-tenant boilerplate workload is (per-tenant system prompts: stationary, hot, different tenants on different workers; llm-d's own benchmark is 150 tenants x 6k shared prefix). the synthetic "worst case" is not an artifact after all: it is the tenant-boilerplate regime, and the collapse claim now names its regime instead of overclaiming. chat-session traffic sits in the immune corner (differential but mortal); universal-prefix agent traffic sits in the other (immortal but common-mode)
+    - the same stationarity that flatters snapshot staleness (register row 3) is what makes record-insert overgrowth maximally harmful. one workload property, two opposite-signed biases, now both measured
+    - bonus: pure longest prefix collapses on sessions under the *perfect view* (hit 0.090, p50 422s, load cv 1.73 at every view) - the lock-in on a third workload family, since the session generator carries a universal prefix by default
+
+-  sessions shadow ablation, hit    perfect   matched   4x      (p99: perfect -> 4x)
+  hybrid                          0.248     0.249     0.257    2.77 -> 3.14
+  lmetric                         0.299     0.294     0.288    2.90 -> 4.27
+  dynamo cost                     0.226     0.226     0.236    2.81 -> 2.87
+  dualmap (depth 4)               0.314     0.312     0.310    3.74 -> 4.64
+  longest prefix (lock-in)        0.090     0.090     0.090    1034 at every view
