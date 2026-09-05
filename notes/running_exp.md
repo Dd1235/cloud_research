@@ -528,3 +528,14 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   hybrid, hit                     0.210   0.229   0.267   0.316
   dualmap depth 16, hit           0.254   0.274   0.315   0.356
   dualmap depth 1, p50 (s)        0.62    420     420     421
+
+
+- headline cells at 10 seeds with intervals (5/9/26, R4): the three policies the paper quotes, at a fresh view, a 5s period, and a 30s period (one turnover of mean age), 10 paired seeds, mean with a 95% bootstrap ci of the mean (scripts/headline_ci.py, seed_statistics). out/headline_ci.csv
+    - every 3-seed median quoted so far sits inside its 10-seed interval, and the intervals are tight (half-widths 0.2-0.7 points of hit rate). the earlier tables stand as published
+    - the ordering claims are now interval-separated: dualmap's stale-view hit [0.697, 0.704] does not touch longest prefix's [0.650, 0.660], which does not touch hybrid's [0.521, 0.534]; the "no collapse" gap to blind (~0.41) is ~40 interval half-widths wide
+
+-  10-seed mean [95% ci]           P=0                  P=5                  P=30
+  longest prefix hit            .724 [.721,.726]     .696 [.694,.700]     .654 [.650,.660]
+  hybrid hit                    .600 [.597,.604]     .564 [.562,.567]     .528 [.521,.534]
+  dualmap hit                   .724 [.722,.726]     .712 [.709,.716]     .700 [.697,.704]
+  hybrid view fp                0                    .054 [.052,.056]     .106 [.102,.111]
