@@ -466,3 +466,6 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   dynamo cost                          0.378   0.378   0.380   0.383    0.381
   dualmap                              0.414   0.413   0.412   0.414    0.412
   longest prefix (lock-in)             0.329   0.329   0.329   0.329    0.408
+
+
+- the arxiv mooncake trace is not a third workload (5/9/26): ran the full staleness sweep and capacity map on traces/mooncake_trace.jsonl expecting an independent domain, and every number came back within noise of the toolagent runs (ceiling 0.528 both, median gap 81 vs 82s, capacity-map hit rates matching to 2-3 decimals, same herding relief, same shadow lock-in). field comparison: same 23,608 rows, input lengths differ by ±3 tokens, timestamps jittered, same sharing structure. the toolagent release file is the arxiv paper's trace, perturbed. outputs left uncommitted (they would double-count one dataset as two); the vendor-diversity limitation stands at full strength: we have exactly two independent mooncake traces (toolagent-arxiv and conversation) plus mooncake's own synthetic. the audit exists to catch exactly this
