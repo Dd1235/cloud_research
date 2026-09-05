@@ -49,7 +49,7 @@ synthetic-only result is a hypothesis, not a claim.
 | 4 | placeholder worker costs: knees, p99s, the shield's 110s are relative numbers | **bounded next, fixed later** | R5 cost-sensitivity (orderings must survive x0.5/x2); C2 mac calibration for absolutes |
 | 5 | cache capacity decoupled from batch occupancy (real engines share hbm between running kv and prefix cache; a busy worker has a smaller effective cache) | **open** | R6(A) coupled-capacity flag, one staleness sweep |
 | 6 | seed/ci discipline: headline synthetic tables at 1-3 seeds without intervals | **open** | R4: 10 seeds + bootstrap ci on headline tables; trace runs labeled deterministic |
-| 7 | single trace vendor (all mooncake) | **partially addressable** | R2 adds arxiv + synthetic mooncake traces (different domains, same vendor); qwen-bailian wishlist; limitation stated |
+| 7 | single trace vendor (all mooncake) | **worse than assumed, verified 5/9**: the arxiv trace is the toolagent trace with perturbed lengths (checked field by field after results matched to 3 decimals) — we have exactly two independent traces | qwen-bailian or azure llm traces needed for a true third; limitation stated in full |
 | 8 | execution model: linear costs, fixed batch, no preemption, no tensor parallelism, no multi-tenancy | **open, the deepest one** | C1/C3 real-engine legs; claims are about caching + routing, which the real engine exercises directly |
 
 ## statistics policy (R4 target)
