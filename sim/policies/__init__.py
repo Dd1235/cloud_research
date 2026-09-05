@@ -1,3 +1,4 @@
+from .chwbl import Chwbl
 from .dualmap import DualMap
 from .dynamo_cost import DynamoCost
 from .hybrid import Hybrid
@@ -14,7 +15,9 @@ from .session_hash import SessionHash
 # policy means adding one line here.
 #
 # Order is deliberate: cache-blind baselines first, then affinity, then the
-# policies that use both signals. Scripts print them in this order.
+# policies that use both signals. Scripts print them in this order. Within the
+# affinity group the hashing policies run session_hash -> dualmap -> chwbl,
+# which is the order in which they add back-pressure to the same ring.
 # a factory also takes an options dict; policies that have no knobs ignore it,
 # so one --session-depth flag can reach the two hashing policies and nothing else
 POLICIES = {
@@ -34,6 +37,10 @@ POLICIES = {
     ),
     DualMap.name: lambda rng, options: DualMap(
         key_blocks=options.get("key_blocks", 1),
+    ),
+    Chwbl.name: lambda rng, options: Chwbl(
+        key_blocks=options.get("key_blocks", 1),
+        load_bound=options.get("load_bound", 1.25),
     ),
     Lmetric.name: lambda rng, options: Lmetric(
         overlap_source=options.get("overlap_source", "raw"),
@@ -57,6 +64,7 @@ def make_policy(name: str, rng, options: dict | None = None):
 __all__ = [
     "POLICIES",
     "make_policy",
+    "Chwbl",
     "DualMap",
     "DynamoCost",
     "Hybrid",
