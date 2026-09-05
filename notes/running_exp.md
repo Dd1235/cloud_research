@@ -409,3 +409,19 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   hybrid                          1.04    1.65     0.45
   dip / gain (hit·s), lpm         0.5/28  0.4/32   1.9/23
   dip / gain (hit·s), hybrid      22/27   22/25    21/24
+
+
+- scale-in: which worker to remove (4/9/26, E15): one of 4 workers leaves at t=370s (it finishes what it holds, receives nothing new), same setup as E14, choosing the coldest (lowest cumulative reuse per token), a random one, or the busiest (longest queue). 3 seeds; windows averaged over [t, t+2T_C) and after. scripts/scale_out.py --remove-at, out/scale_in_{coldest,random,busiest}.png/.csv
+    - the dominant cost is capacity, whoever leaves: p99 roughly doubles for good (0.9-1.2s → 2.1-2.6s at 8 req/s on 3 workers) and the rankers' hit rate settles ~5 pts lower (0.723 → 0.677 longest prefix; 0.730 → 0.678 dualmap), the smaller-fleet steady state that the capacity map predicts, not a warmth transient. hybrid barely loses reuse (0.631 → 0.628): it was spreading anyway
+    - the plan's guess "removing the coldest is nearly free" is wrong for a ranker fleet. under longest prefix the coldest member is the fleet's miss absorber (it takes the no-match spillover the warm shelves are spared), and removing it is the *worst* choice in the later windows (p99 3.44s vs 2.08 random / 2.20 busiest). removing the busiest costs the most during the transient (p99 3.23s while its stranded queue drains) and the least afterwards. a fleet under pure affinity has specialised members; none of them is free to remove
+    - dualmap's transient is the remap: hit 0.730 → 0.653 in the first two turnovers (coldest variant, the deepest), p99 spike to 4.1s, then recovery to 0.68. honest caveat: our ring rebuilds from the worker *count*, so a removal reassigns positions and remaps roughly 2/3 of the keys, the naive worst case; a proper consistent-hash removal remaps only the leaving worker's 1/4 and would cut this transient. the measured number is an upper bound and the fix is a known one
+    - so scale-in guidance by family: scorers are robust to any choice; rankers prefer removing the *busiest* once its queue can drain (or draining before removal), never the miss absorber; hash-pinned fleets need real consistent removal before any of this matters
+
+-  scale-in, seed-avg windows      pre     0-2T_C   later    (hit rate | p99 s)
+  longest prefix, coldest       0.723|0.89  0.659|2.49  0.677|3.44
+  longest prefix, random        0.723|0.89  0.666|2.42  0.675|2.08
+  longest prefix, busiest       0.723|0.89  0.665|3.23  0.677|2.20
+  hybrid, coldest               0.631|1.16  0.620|2.47  0.627|2.65
+  hybrid, busiest               0.631|1.16  0.631|2.26  0.629|2.48
+  dualmap, coldest              0.730|1.05  0.653|4.07  0.681|2.53
+  dualmap, busiest              0.730|1.05  0.667|2.14  0.676|2.20
