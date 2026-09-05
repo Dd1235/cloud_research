@@ -425,3 +425,17 @@ longest prefix (any treatment)     0.716   0.715   0.714   0.697   0.692   0.645
   hybrid, busiest               0.631|1.16  0.631|2.26  0.629|2.48
   dualmap, coldest              0.730|1.05  0.653|4.07  0.681|2.53
   dualmap, busiest              0.730|1.05  0.667|2.14  0.676|2.20
+
+
+- cold replica scale-out on the toolagent trace (5/9/26, E14 at trace scale): the E14 arms replayed on the first 6000 toolagent requests (8 warm workers + 1 joining at t=397s, uncalibrated trace costs, session depth 16, 20s windows, one seed). turnover here is ~137s, so the transfer models 34s and the shield lasts ~137s. out/scale_out_toolagent.png/.csv
+    - a pure ranker ignores the new worker completely: longest prefix naive has dip 0.0, gain 0.0, and the newcomer never receives a single request. every trace order matches at least the universal tool prompt on some veteran, so the best match is never zero, the tie-break never fires, and the ranker never looks at an empty shelf. scale-out under pure affinity is a no-op: the capacity is bought and never used. (on the synthetic workload genuinely new prefixes kept arriving, which is why it warmed there in 1.24 T_C)
+    - the shield backfires catastrophically at trace scale: p99 110s for every policy (baseline 6-6.6s). the shield sends the newcomer every order whose best veteran match is under 25% of the prompt; on a capacity-limited trace that is not rare spillover but a large share of all traffic (reuse ceiling 0.55, fleet reuse 0.41), so one cold worker receives close to half of 6.7 req/s of 9k-token prompts for two minutes and saturates. the synthetic run hid this because a warm 4-worker fleet at zipf 0.9 leaves few orders below the threshold. a shield must be load-bounded (route to the newcomer only while its queue is shortest, the chwbl-style (1+ε) idea), not affinity-bounded alone; as specified it is the cure that is worse than the disease
+    - prewarm is the only arm that works for every policy family: time to warm 0.16 / 0.46 / 0.17 T_C for hybrid / longest prefix / dualmap, dips ≤ 2.6 hit·s, the largest gains (8-9 hit·s), and p99 improves (hybrid 6.22 → 5.88s). 34s of modeled transfer buys a worker that is useful on arrival, and it is the only way a pure ranker's new worker gets used at all (its prewarmed shelf can win matches)
+    - hybrid's naive join needs no help at trace scale (warm in 0.02 T_C: its load term feeds the newcomer at once, and the universal prefix makes its first orders hits); dualmap's is fine too (0.17 T_C, the remap supplies traffic). so the arm to buy depends on the policy: scorers scale out for free, hash fleets nearly so, rankers only with prewarm
+    - fleet-level hit rate barely moves in any arm (+0.6-0.7 pts prewarm): one worker in nine, joining 40% through. the cloud statement sharpens: at trace scale the cost of a cold replica is not a dip in what the fleet had, it is *whether the new capacity is usable at all*, and that is a router property, not a cache property
+
+-  toolagent scale-out              naive           shield          prewarm
+  hybrid, time to warm (T_C)      0.02            2.32            0.16
+  longest prefix                  never chosen    1.34            0.46
+  dualmap                         0.17            1.77            0.17
+  p99 (s, baseline 6.1-6.6)       5.9-6.6         ~110 (all)      5.9-6.2
